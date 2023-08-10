@@ -101,6 +101,15 @@ pub async fn emit_transactions_with_cluster(
     if reuse_accounts {
         emit_job_request = emit_job_request.reuse_accounts();
     }
+
+    if let Some(seed) = &args.account_minter_seed {
+        emit_job_request = emit_job_request.account_minter_seed(seed);
+    }
+
+    if args.account_minter_only {
+        emit_job_request = emit_job_request.account_minter_only();
+    }
+
     if let Some(max_transactions_per_account) = args.max_transactions_per_account {
         emit_job_request =
             emit_job_request.max_transactions_per_account(max_transactions_per_account);

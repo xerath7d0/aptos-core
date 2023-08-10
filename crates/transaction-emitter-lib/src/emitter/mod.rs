@@ -30,6 +30,7 @@ use rand_core::SeedableRng;
 use std::{
     cmp::{max, min},
     collections::{HashMap, HashSet},
+    str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -142,6 +143,9 @@ pub struct EmitJobRequest {
     coordination_delay_between_instances: Duration,
 
     latency_polling_interval: Duration,
+
+    account_minter_seed: Option<[u8; 32]>,
+    account_minter_only: bool,
 }
 
 impl Default for EmitJobRequest {
@@ -166,6 +170,8 @@ impl Default for EmitJobRequest {
             prompt_before_spending: false,
             coordination_delay_between_instances: Duration::from_secs(0),
             latency_polling_interval: Duration::from_millis(300),
+            account_minter_seed: None,
+            account_minter_only: false,
         }
     }
 }
@@ -262,6 +268,27 @@ impl EmitJobRequest {
 
     pub fn latency_polling_interval(mut self, latency_polling_interval: Duration) -> Self {
         self.latency_polling_interval = latency_polling_interval;
+        self
+    }
+
+    pub fn account_minter_seed(mut self, seed_string: &str) -> Self {
+        // Remove the brackets and spaces
+        let cleaned_string = seed_string
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .replace(' ', "");
+
+        // Parse the cleaned string into a vector
+        let parsed_vector: Result<Vec<u8>, _> =
+            cleaned_string.split(',').map(u8::from_str).collect();
+
+        self.account_minter_seed =
+            Some(<[u8; 32]>::try_from(parsed_vector.expect("failed to parse seed")).unwrap());
+        self
+    }
+
+    pub fn account_minter_only(mut self) -> Self {
+        self.account_minter_only = true;
         self
     }
 
@@ -581,7 +608,11 @@ impl TxnEmitter {
             .clone()
             .with_gas_unit_price(req.gas_price * req.init_gas_price_multiplier)
             .with_transaction_expiration_time(init_expiration_time);
-        let seed = self.rng.gen();
+        let seed = if let Some(seed) = req.account_minter_seed {
+            seed
+        } else {
+            self.rng.gen()
+        };
         info!(
             "AccountMinter Seed (can be passed in to reuse accounts): {:?}",
             seed
@@ -606,6 +637,9 @@ impl TxnEmitter {
         let mut all_accounts = account_minter
             .create_accounts(&txn_executor, &req, &mode_params, num_accounts)
             .await?;
+        if req.account_minter_only {
+            anyhow::bail!("account_minter_only selected, exiting");
+        }
         let stop = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(DynamicStatsTracking::new(stats_tracking_phases));
         let tokio_handle = Handle::current();

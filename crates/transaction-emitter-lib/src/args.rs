@@ -189,6 +189,12 @@ pub struct EmitArgs {
     //   basically creating a new source account (to then create seed accounts from).
     #[clap(long)]
     pub coordination_delay_between_instances: Option<u64>,
+
+    #[clap(long)]
+    pub account_minter_seed: Option<String>,
+
+    #[clap(long)]
+    pub account_minter_only: bool,
 }
 
 fn parse_target(target: &str) -> Result<Url> {

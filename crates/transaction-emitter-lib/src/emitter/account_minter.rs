@@ -66,15 +66,15 @@ impl<'t> AccountMinter<'t> {
         let expected_num_seed_accounts = (total_requested_accounts / 50)
             .clamp(1, (total_requested_accounts as f32).sqrt() as usize + 1);
         let num_accounts = total_requested_accounts - accounts.len(); // Only minting extra accounts
-        let coins_per_account = (req.expected_max_txns / total_requested_accounts as u64)
-            .checked_mul(SEND_AMOUNT + req.expected_gas_per_txn * req.gas_price)
-            .unwrap()
-            .checked_add(
-                req.max_gas_per_txn * req.gas_price
-                // for module publishing
-                + 2 * req.max_gas_per_txn * req.gas_price * req.init_gas_price_multiplier,
-            )
-            .unwrap(); // extra coins for secure to pay none zero gas price
+        let coins_per_account = if req.account_minter_only {
+            1
+        } else {
+            (req.expected_max_txns / total_requested_accounts as u64)
+                .checked_mul(SEND_AMOUNT + req.expected_gas_per_txn * req.gas_price)
+                .unwrap()
+                .checked_add(req.max_gas_per_txn * req.gas_price)
+                .unwrap()
+        }; // extra coins for secure to pay none zero gas price
         let txn_factory = self.txn_factory.clone();
         let expected_children_per_seed_account =
             (num_accounts + expected_num_seed_accounts - 1) / expected_num_seed_accounts;
@@ -292,7 +292,7 @@ impl<'t> AccountMinter<'t> {
         while i < seed_account_num {
             let batch_size = min(max_submit_batch_size, seed_account_num - i);
             let mut rng = StdRng::from_rng(self.rng()).unwrap();
-            let mut batch = gen_random_accounts(batch_size, &mut rng);
+            let mut batch = gen_reusable_accounts(txn_executor, batch_size, &mut rng).await?;
             let txn_factory = &self.txn_factory;
             let create_requests: Vec<_> = batch
                 .iter()
@@ -424,7 +424,7 @@ where
             info!("Loading {} accounts if they exist", batch_size);
             gen_reusable_accounts(txn_executor, batch_size, &mut rng).await?
         } else {
-            let batch = gen_random_accounts(batch_size, &mut rng);
+            let batch = gen_reusable_accounts(txn_executor, batch_size, &mut rng).await?;
             let creation_requests: Vec<_> = batch
                 .as_slice()
                 .iter()
