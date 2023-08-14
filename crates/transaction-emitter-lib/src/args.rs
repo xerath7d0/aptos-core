@@ -194,7 +194,23 @@ pub struct EmitArgs {
     pub account_minter_seed: Option<String>,
 
     #[clap(long)]
-    pub account_minter_only: bool,
+    pub coins_per_account_override: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Parser, Serialize)]
+pub struct CreateAccountsArgs {
+    /// Number of accounts to create
+    #[clap(long)]
+    pub count: usize,
+
+    /// The amount of gas needed to create an account
+    #[clap(long)]
+    pub max_gas_per_txn: u64,
+
+    /// Optional seed, which is compatible with emit-tx. If no seed is provided, a random seed is
+    /// used and printed.
+    #[clap(long)]
+    pub account_minter_seed: Option<String>,
 }
 
 fn parse_target(target: &str) -> Result<Url> {

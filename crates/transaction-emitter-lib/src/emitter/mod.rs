@@ -145,7 +145,7 @@ pub struct EmitJobRequest {
     latency_polling_interval: Duration,
 
     account_minter_seed: Option<[u8; 32]>,
-    account_minter_only: bool,
+    coins_per_account_override: Option<u64>,
 }
 
 impl Default for EmitJobRequest {
@@ -171,7 +171,7 @@ impl Default for EmitJobRequest {
             coordination_delay_between_instances: Duration::from_secs(0),
             latency_polling_interval: Duration::from_millis(300),
             account_minter_seed: None,
-            account_minter_only: false,
+            coins_per_account_override: None,
         }
     }
 }
@@ -272,23 +272,12 @@ impl EmitJobRequest {
     }
 
     pub fn account_minter_seed(mut self, seed_string: &str) -> Self {
-        // Remove the brackets and spaces
-        let cleaned_string = seed_string
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .replace(' ', "");
-
-        // Parse the cleaned string into a vector
-        let parsed_vector: Result<Vec<u8>, _> =
-            cleaned_string.split(',').map(u8::from_str).collect();
-
-        self.account_minter_seed =
-            Some(<[u8; 32]>::try_from(parsed_vector.expect("failed to parse seed")).unwrap());
+        self.account_minter_seed = Some(parse_seed(seed_string));
         self
     }
 
-    pub fn account_minter_only(mut self) -> Self {
-        self.account_minter_only = true;
+    pub fn coins_per_account_override(mut self, coins: u64) -> Self {
+        self.coins_per_account_override = Some(coins);
         self
     }
 
@@ -602,48 +591,35 @@ impl TxnEmitter {
             .with_transaction_expiration_time(mode_params.txn_expiration_time_secs)
             .with_gas_unit_price(req.gas_price)
             .with_max_gas_amount(req.max_gas_per_txn);
+
         let init_expiration_time =
             (mode_params.txn_expiration_time_secs as f64 * req.init_expiration_multiplier) as u64;
         let init_txn_factory = txn_factory
             .clone()
             .with_gas_unit_price(req.gas_price * req.init_gas_price_multiplier)
             .with_transaction_expiration_time(init_expiration_time);
-        let seed = if let Some(seed) = req.account_minter_seed {
-            seed
-        } else {
-            self.rng.gen()
-        };
-        info!(
-            "AccountMinter Seed (can be passed in to reuse accounts): {:?}",
-            seed
-        );
-        let mut account_minter = AccountMinter::new(
-            root_account,
-            init_txn_factory.clone(),
-            StdRng::from_seed(seed),
-        );
         let init_retries: usize =
             usize::try_from(init_expiration_time / req.init_retry_interval.as_secs()).unwrap();
-        info!(
-            "Using reliable/retriable init transaction executor with {} retries, every {}s",
+        let seed = req.account_minter_seed.unwrap_or_else(|| self.rng.gen());
+        let mut all_accounts = create_accounts(
+            root_account,
+            &init_txn_factory,
+            &req,
+            mode_params.max_submit_batch_size,
+            seed,
+            num_accounts,
             init_retries,
-            req.init_retry_interval.as_secs_f32()
-        );
+        )
+        .await?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let stats = Arc::new(DynamicStatsTracking::new(stats_tracking_phases));
+        let tokio_handle = Handle::current();
+
         let txn_executor = RestApiReliableTransactionSubmitter {
             rest_clients: req.rest_clients.clone(),
             max_retries: init_retries,
             retry_after: req.init_retry_interval,
         };
-        let mut all_accounts = account_minter
-            .create_accounts(&txn_executor, &req, &mode_params, num_accounts)
-            .await?;
-        if req.account_minter_only {
-            anyhow::bail!("account_minter_only selected, exiting");
-        }
-        let stop = Arc::new(AtomicBool::new(false));
-        let stats = Arc::new(DynamicStatsTracking::new(stats_tracking_phases));
-        let tokio_handle = Handle::current();
-
         let (mut txn_generator_creator, _, _) = create_txn_generator_creator(
             &req.transaction_mix_per_phase,
             &mut all_accounts,
@@ -1018,4 +994,49 @@ pub fn gen_transfer_txn_request(
     sender.sign_with_transaction_builder(
         txn_factory.payload(aptos_stdlib::aptos_coin_transfer(*receiver, num_coins)),
     )
+}
+
+pub fn parse_seed(seed_string: &str) -> [u8; 32] {
+    // Remove the brackets and spaces
+    let cleaned_string = seed_string
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .replace(' ', "");
+
+    // Parse the cleaned string into a vector
+    let parsed_vector: Result<Vec<u8>, _> = cleaned_string.split(',').map(u8::from_str).collect();
+
+    <[u8; 32]>::try_from(parsed_vector.expect("failed to parse seed"))
+        .expect("failed to convert to array")
+}
+
+pub async fn create_accounts(
+    root_account: &mut LocalAccount,
+    txn_factory: &TransactionFactory,
+    req: &EmitJobRequest,
+    max_submit_batch_size: usize,
+    seed: [u8; 32],
+    num_accounts: usize,
+    retries: usize,
+) -> Result<Vec<LocalAccount>> {
+    info!(
+        "Using reliable/retriable init transaction executor with {} retries, every {}s",
+        retries,
+        req.init_retry_interval.as_secs_f32()
+    );
+
+    info!(
+        "AccountMinter Seed (can be passed in to reuse accounts): {:?}",
+        seed
+    );
+    let mut account_minter =
+        AccountMinter::new(root_account, txn_factory.clone(), StdRng::from_seed(seed));
+    let txn_executor = RestApiReliableTransactionSubmitter {
+        rest_clients: req.rest_clients.clone(),
+        max_retries: retries,
+        retry_after: req.init_retry_interval,
+    };
+    account_minter
+        .create_accounts(&txn_executor, req, max_submit_batch_size, num_accounts)
+        .await
 }
