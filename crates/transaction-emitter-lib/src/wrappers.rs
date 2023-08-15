@@ -26,7 +26,7 @@ pub async fn emit_transactions(
         let cluster = Cluster::try_from_cluster_args(cluster_args)
             .await
             .context("Failed to build cluster")?;
-        emit_transactions_with_cluster(&cluster, emit_args, cluster_args.reuse_accounts).await
+        emit_transactions_with_cluster(&cluster, emit_args).await
     } else {
         let initial_delay_after_minting = emit_args.coordination_delay_between_instances.unwrap();
         let start_time = Instant::now();
@@ -53,12 +53,7 @@ pub async fn emit_transactions(
                 .await
                 .context("Failed to build cluster")?;
 
-            let result = emit_transactions_with_cluster(
-                &cluster,
-                &cur_emit_args,
-                cluster_args.reuse_accounts,
-            )
-            .await;
+            let result = emit_transactions_with_cluster(&cluster, &cur_emit_args).await;
             match result {
                 Ok(value) => return Ok(value),
                 Err(e) => {
@@ -73,7 +68,6 @@ pub async fn emit_transactions(
 pub async fn emit_transactions_with_cluster(
     cluster: &Cluster,
     args: &EmitArgs,
-    reuse_accounts: bool,
 ) -> Result<TxnStats> {
     let emitter_mode = EmitJobMode::create(args.mempool_backlog, args.target_tps);
 
@@ -102,9 +96,6 @@ pub async fn emit_transactions_with_cluster(
             .coordination_delay_between_instances(Duration::from_secs(
                 args.coordination_delay_between_instances.unwrap_or(0),
             ));
-    if reuse_accounts {
-        emit_job_request = emit_job_request.reuse_accounts();
-    }
 
     if let Some(max_transactions_per_account) = args.max_transactions_per_account {
         emit_job_request =

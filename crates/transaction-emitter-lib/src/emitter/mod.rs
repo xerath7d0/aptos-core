@@ -126,7 +126,6 @@ pub struct EmitJobRequest {
     gas_price: u64,
     init_gas_price_multiplier: u64,
 
-    reuse_accounts: bool,
     mint_to_root: bool,
 
     txn_expiration_time_secs: u64,
@@ -159,7 +158,6 @@ impl Default for EmitJobRequest {
             max_gas_per_txn: aptos_global_constants::MAX_GAS_AMOUNT,
             gas_price: aptos_global_constants::GAS_UNIT_PRICE,
             init_gas_price_multiplier: 10,
-            reuse_accounts: false,
             mint_to_root: false,
             txn_expiration_time_secs: 60,
             init_expiration_multiplier: 3.0,
@@ -240,11 +238,6 @@ impl EmitJobRequest {
 
     pub fn mode(mut self, mode: EmitJobMode) -> Self {
         self.mode = mode;
-        self
-    }
-
-    pub fn reuse_accounts(mut self) -> Self {
-        self.reuse_accounts = true;
         self
     }
 
@@ -1026,7 +1019,7 @@ pub async fn create_accounts(
     );
 
     info!(
-        "AccountMinter Seed (can be passed in to reuse accounts): {:?}",
+        "AccountMinter Seed (reuse accounts by passing into --account-minter-seed): {:?}",
         seed
     );
     let mut account_minter =

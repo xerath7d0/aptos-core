@@ -209,32 +209,23 @@ impl<'t> AccountMinter<'t> {
             txn_factory.get_gas_unit_price(),
         );
 
-        let seed_rngs = gen_rng_for_reusable_account(actual_num_seed_accounts);
         let start = Instant::now();
         let request_counters = txn_executor.create_counter_state();
 
         // For each seed account, create a future and transfer coins from that seed account to new accounts
-        let account_futures = seed_accounts
-            .into_iter()
-            .enumerate()
-            .map(|(i, seed_account)| {
-                // Spawn new threads
-                create_and_fund_new_accounts(
-                    seed_account,
-                    num_new_child_accounts,
-                    coins_per_account,
-                    max_submit_batch_size,
-                    txn_executor,
-                    &txn_factory,
-                    req.reuse_accounts,
-                    if req.reuse_accounts {
-                        seed_rngs[i].clone()
-                    } else {
-                        StdRng::from_rng(self.rng()).unwrap()
-                    },
-                    &request_counters,
-                )
-            });
+        let account_futures = seed_accounts.into_iter().map(|seed_account| {
+            // Spawn new threads
+            create_and_fund_new_accounts(
+                seed_account,
+                num_new_child_accounts,
+                coins_per_account,
+                max_submit_batch_size,
+                txn_executor,
+                &txn_factory,
+                StdRng::from_rng(self.rng()).unwrap(),
+                &request_counters,
+            )
+        });
 
         // Each future creates 10 accounts, limit concurrency to 1000.
         let stream = futures::stream::iter(account_futures).buffer_unordered(CREATION_PARALLELISM);
@@ -389,23 +380,6 @@ impl<'t> AccountMinter<'t> {
     }
 }
 
-fn gen_rng_for_reusable_account(count: usize) -> Vec<StdRng> {
-    // use same seed for reuse account creation and reuse
-    // TODO: Investigate why we use the same seed and then consider changing
-    // this so that we don't do this, since it causes conflicts between
-    // runs of the emitter.
-    let mut seed = [
-        0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0,
-        0, 0,
-    ];
-    let mut rngs = vec![];
-    for i in 0..count {
-        seed[31] = i as u8;
-        rngs.push(StdRng::from_seed(seed));
-    }
-    rngs
-}
-
 /// Create `num_new_accounts` by transferring coins from `source_account`. Return Vec of created
 /// accounts
 async fn create_and_fund_new_accounts<R>(
@@ -415,7 +389,6 @@ async fn create_and_fund_new_accounts<R>(
     max_num_accounts_per_batch: usize,
     txn_executor: &dyn ReliableTransactionSubmitter,
     txn_factory: &TransactionFactory,
-    reuse_account: bool,
     mut rng: R,
     counters: &CounterState,
 ) -> Result<Vec<LocalAccount>>
@@ -427,10 +400,7 @@ where
 
     while i < num_new_accounts {
         let batch_size = min(max_num_accounts_per_batch, num_new_accounts - i);
-        let mut batch = if reuse_account {
-            info!("Loading {} accounts if they exist", batch_size);
-            gen_reusable_accounts(txn_executor, batch_size, &mut rng).await?
-        } else {
+        let mut batch = {
             let batch = gen_reusable_accounts(txn_executor, batch_size, &mut rng).await?;
             let creation_requests: Vec<_> = batch
                 .as_slice()
@@ -487,15 +457,6 @@ where
     let address = account_key.authentication_key().derived_address();
     let sequence_number = txn_executor.query_sequence_number(address).await?;
     Ok(LocalAccount::new(address, account_key, sequence_number))
-}
-
-fn gen_random_accounts<R>(num_accounts: usize, rng: &mut R) -> Vec<LocalAccount>
-where
-    R: ::rand_core::RngCore + ::rand_core::CryptoRng,
-{
-    (0..num_accounts)
-        .map(|_| LocalAccount::generate(rng))
-        .collect()
 }
 
 pub fn create_and_fund_account_request(

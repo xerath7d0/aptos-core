@@ -71,10 +71,6 @@ pub struct ClusterArgs {
     #[clap(long, conflicts_with = "targets")]
     pub targets_file: Option<String>,
 
-    /// If set, try to use public peers instead of localhost.
-    #[clap(long)]
-    pub reuse_accounts: bool,
-
     #[clap(long, default_value_t = ChainId::test())]
     pub chain_id: ChainId,
 
