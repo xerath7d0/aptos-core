@@ -9,6 +9,7 @@ use aptos_config::config::{
     NO_OP_STORAGE_PRUNER_CONFIG,
 };
 use aptos_db::AptosDB;
+use aptos_framework::natives::code::{PackageMetadata, PackageRegistry};
 use aptos_storage_interface::{DbReader, MAX_REQUEST_LIMIT};
 use aptos_types::{
     account_address::AccountAddress,
@@ -16,7 +17,7 @@ use aptos_types::{
     state_store::{state_key::StateKey, state_key_prefix::StateKeyPrefix, state_value::StateValue},
     transaction::{Transaction, TransactionInfo, Version},
 };
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 pub struct DBDebuggerInterface(Arc<dyn DbReader>);
 
@@ -77,6 +78,22 @@ impl AptosValidatorInterface for DBDebuggerInterface {
         let txn_infos = txn_info_iter.collect::<Result<Vec<_>>>()?;
         ensure!(txns.len() == txn_infos.len());
         Ok((txns, txn_infos))
+    }
+
+    async fn get_committed_transactions_with_available_src(
+        &self,
+        _start: Version,
+        _limit: u64,
+        _registry_cache: &mut HashMap<AccountAddress, PackageRegistry>,
+    ) -> Result<
+        Vec<(
+            u64,
+            Transaction,
+            (AccountAddress, String),
+            HashMap<(AccountAddress, String), PackageMetadata>,
+        )>,
+    > {
+        unimplemented!();
     }
 
     async fn get_latest_version(&self) -> Result<Version> {

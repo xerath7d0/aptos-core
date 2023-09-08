@@ -7,6 +7,8 @@ mod storage_interface;
 
 pub use crate::{rest_interface::RestDebuggerInterface, storage_interface::DBDebuggerInterface};
 use anyhow::{anyhow, Result};
+use aptos_framework::natives::code::{PackageMetadata, PackageRegistry};
+use aptos_language_e2e_tests::data_store::FakeDataStore;
 use aptos_state_view::TStateView;
 use aptos_types::{
     account_address::AccountAddress,
@@ -15,13 +17,20 @@ use aptos_types::{
     account_view::AccountView,
     on_chain_config::ValidatorSet,
     state_store::{
-        state_key::StateKey, state_storage_usage::StateStorageUsage, state_value::StateValue,
+        state_key::{StateKey, StateKeyInner},
+        state_storage_usage::StateStorageUsage,
+        state_value::StateValue,
     },
     transaction::{Transaction, TransactionInfo, Version},
 };
 use lru::LruCache;
 use move_binary_format::file_format::CompiledModule;
-use std::sync::{Arc, Mutex};
+use move_core_types::language_storage::CODE_TAG;
+use std::{
+    collections::HashMap,
+    ops::DerefMut,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 // TODO(skedia) Clean up this interfact to remove account specific logic and move to state store
@@ -45,6 +54,20 @@ pub trait AptosValidatorInterface: Sync {
         start: Version,
         limit: u64,
     ) -> Result<(Vec<Transaction>, Vec<TransactionInfo>)>;
+
+    async fn get_committed_transactions_with_available_src(
+        &self,
+        _start: Version,
+        _limit: u64,
+        registry_cache: &mut HashMap<AccountAddress, PackageRegistry>,
+    ) -> Result<
+        Vec<(
+            u64,
+            Transaction,
+            (AccountAddress, String),
+            HashMap<(AccountAddress, String), PackageMetadata>,
+        )>,
+    >;
 
     async fn get_latest_version(&self) -> Result<Version>;
 
@@ -117,6 +140,7 @@ pub struct DebuggerStateView {
     query_sender:
         Mutex<UnboundedSender<(StateKey, Version, std::sync::mpsc::Sender<Option<Vec<u8>>>)>>,
     version: Version,
+    pub data_read_stake_keys: Option<Arc<Mutex<HashMap<StateKey, StateValue>>>>,
 }
 
 async fn handler_thread<'a>(
@@ -126,12 +150,12 @@ async fn handler_thread<'a>(
         Version,
         std::sync::mpsc::Sender<Option<Vec<u8>>>,
     )>,
+    fake_data: Option<FakeDataStore>,
 ) {
     const M: usize = 1024 * 1024;
     let cache = Arc::new(Mutex::new(
         LruCache::<(StateKey, Version), Option<Vec<u8>>>::new(M),
     ));
-
     loop {
         let (key, version, sender) =
             if let Some((key, version, sender)) = thread_receiver.recv().await {
@@ -139,7 +163,15 @@ async fn handler_thread<'a>(
             } else {
                 break;
             };
-
+        if let Some(data) = &fake_data {
+            if data.contains_key(&key) {
+                let val_opt = data.get_state_value(&key).unwrap();
+                if let Some(val) = val_opt {
+                    sender.send(Some(val.bytes().to_vec())).unwrap();
+                    continue;
+                }
+            }
+        }
         if let Some(val) = cache.lock().unwrap().get(&(key.clone(), version)) {
             sender.send(val.clone()).unwrap();
         } else {
@@ -163,10 +195,42 @@ impl DebuggerStateView {
     pub fn new(db: Arc<dyn AptosValidatorInterface + Send>, version: Version) -> Self {
         let (query_sender, thread_receiver) = unbounded_channel();
 
-        tokio::spawn(async move { handler_thread(db, thread_receiver).await });
+        tokio::spawn(async move { handler_thread(db, thread_receiver, None).await });
         Self {
             query_sender: Mutex::new(query_sender),
             version,
+            data_read_stake_keys: None,
+        }
+    }
+
+    pub fn new_with_fake_data(
+        db: Arc<dyn AptosValidatorInterface + Send>,
+        version: Version,
+        fake_data: FakeDataStore,
+    ) -> Self {
+        let (query_sender, thread_receiver) = unbounded_channel();
+
+        tokio::spawn(
+            async move { handler_thread(db, thread_receiver, Some(fake_data.clone())).await },
+        );
+        Self {
+            query_sender: Mutex::new(query_sender),
+            version,
+            data_read_stake_keys: None,
+        }
+    }
+
+    pub fn new_with_data_reads(
+        db: Arc<dyn AptosValidatorInterface + Send>,
+        version: Version,
+    ) -> Self {
+        let (fake_query_sender, thread_receiver) = unbounded_channel();
+
+        tokio::spawn(async move { handler_thread(db, thread_receiver, None).await });
+        Self {
+            query_sender: Mutex::new(fake_query_sender),
+            version,
+            data_read_stake_keys: Some(Arc::new(Mutex::new(HashMap::new()))),
         }
     }
 
@@ -181,7 +245,35 @@ impl DebuggerStateView {
             .send((state_key.clone(), version, tx))
             .unwrap();
         let bytes_opt = rx.recv()?;
-        Ok(bytes_opt.map(|bytes| StateValue::new_legacy(bytes.into())))
+        let ret = bytes_opt.map(|bytes| StateValue::new_legacy(bytes.into()));
+
+        let is_aptos_code_path = || -> bool {
+            match state_key.inner() {
+                StateKeyInner::AccessPath(access_path) => {
+                    !access_path.path.is_empty()
+                        && access_path.path[0] == CODE_TAG
+                        && (access_path.address == AccountAddress::ONE
+                            || access_path.address == AccountAddress::THREE
+                            || access_path.address == AccountAddress::FOUR)
+                },
+                _ => false,
+            }
+        };
+
+        if is_aptos_code_path() {
+            return Ok(ret);
+        }
+        if let Some(reads) = &self.data_read_stake_keys {
+            if !reads.lock().unwrap().contains_key(state_key) && ret.is_some() {
+                reads
+                    .lock()
+                    .unwrap()
+                    .deref_mut()
+                    .insert(state_key.clone(), ret.clone().unwrap());
+            }
+        }
+
+        Ok(ret)
     }
 }
 
