@@ -3771,6 +3771,7 @@ dependencies = [
  "aptos-api-types",
  "aptos-config",
  "aptos-db",
+ "aptos-framework",
  "aptos-rest-client",
  "aptos-state-view",
  "aptos-storage-interface",
