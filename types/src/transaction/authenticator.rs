@@ -222,7 +222,7 @@ impl TransactionAuthenticator {
         }
     }
 
-    pub fn secondary_signer_addreses(&self) -> Vec<AccountAddress> {
+    pub fn secondary_signer_addresses(&self) -> Vec<AccountAddress> {
         match self {
             Self::Ed25519 { .. } | Self::MultiEd25519 { .. } | Self::Secp256k1Ecdsa { .. } => {
                 vec![]

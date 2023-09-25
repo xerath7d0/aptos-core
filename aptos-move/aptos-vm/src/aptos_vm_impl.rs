@@ -649,7 +649,7 @@ impl AptosVMImpl {
         }
     }
 
-    pub fn new_session<'r>(
+    pub(crate) fn new_session<'r>(
         &self,
         resolver: &'r impl AptosMoveResolver,
         session_id: SessionId,
