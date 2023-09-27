@@ -141,6 +141,8 @@ impl<T: GcsClientTrait + Sync + Send + Clone> StorageTransactionRead for GcsInte
                 &Range::default(),
             )
             .await;
+        // Note: as the last resort of the storages, if the file cannot be found, it means
+        // the transactions are not available yet and it'll be available in the future.
         let file = match result {
             Err(Error::Response(e)) if e.code == 404 => {
                 return Ok(StorageReadStatus::NotAvailableYet)
@@ -227,13 +229,6 @@ mod tests {
     }
     #[tokio::test]
     async fn test_get_transactions() {
-        let serialized_metadata = serde_json::to_vec(&FileMetadata {
-            chain_id: 1,
-            file_folder_size: 1000,
-            version: 1000,
-        })
-        .unwrap();
-
         let mut transactions = Vec::new();
         for i in 0..1000 {
             let transaction = Transaction {
@@ -257,13 +252,8 @@ mod tests {
         .unwrap();
 
         let mock_gcs_client = MockGcsClient {
-            resps: vec![serialized_metadata, serialized_transactions],
+            resps: vec![serialized_transactions],
             reqs: vec![
-                GetObjectRequest {
-                    object: METADATA_FILE_NAME.to_string(),
-                    bucket: "test1".to_string(),
-                    ..Default::default()
-                },
                 GetObjectRequest {
                     object: "files/0.json".to_string(),
                     bucket: "test1".to_string(),
@@ -283,13 +273,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_transactions_with_partial() {
-        let serialized_metadata = serde_json::to_vec(&FileMetadata {
-            chain_id: 1,
-            file_folder_size: 1000,
-            version: 1000,
-        })
-        .unwrap();
-
         let mut transactions = Vec::new();
         for i in 0..1000 {
             let transaction = Transaction {
@@ -313,13 +296,8 @@ mod tests {
         .unwrap();
 
         let mock_gcs_client = MockGcsClient {
-            resps: vec![serialized_metadata, serialized_transactions],
+            resps: vec![serialized_transactions],
             reqs: vec![
-                GetObjectRequest {
-                    object: METADATA_FILE_NAME.to_string(),
-                    bucket: "test2".to_string(),
-                    ..Default::default()
-                },
                 GetObjectRequest {
                     object: "files/0.json".to_string(),
                     bucket: "test2".to_string(),

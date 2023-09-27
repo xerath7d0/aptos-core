@@ -166,7 +166,9 @@ mod tests {
             version: 42,
             ..Transaction::default()
         };
-        let values = redis::Value::Bulk(vec![redis::Value::Data(transaction.encode_to_vec())]);
+        let encoded = transaction.encode_to_vec();
+        let base64_encoded = base64::encode(encoded);
+        let values = redis::Value::Bulk(vec![redis::Value::Data(base64_encoded.into())]);
         let mock_connection = MockRedisConnection::new(vec![
             MockCmd::new(
                 redis::cmd("GET").arg(REDIS_ENDING_VERSION_EXCLUSIVE_KEY),
