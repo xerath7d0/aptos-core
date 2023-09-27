@@ -253,13 +253,11 @@ mod tests {
 
         let mock_gcs_client = MockGcsClient {
             resps: vec![serialized_transactions],
-            reqs: vec![
-                GetObjectRequest {
-                    object: "files/0.json".to_string(),
-                    bucket: "test1".to_string(),
-                    ..Default::default()
-                },
-            ],
+            reqs: vec![GetObjectRequest {
+                object: "files/0.json".to_string(),
+                bucket: "test1".to_string(),
+                ..Default::default()
+            }],
             index: AtomicU64::new(0),
         };
         let gcs_client = GcsInternalClient::new_with_client("test1".to_string(), mock_gcs_client)
@@ -297,13 +295,11 @@ mod tests {
 
         let mock_gcs_client = MockGcsClient {
             resps: vec![serialized_transactions],
-            reqs: vec![
-                GetObjectRequest {
-                    object: "files/0.json".to_string(),
-                    bucket: "test2".to_string(),
-                    ..Default::default()
-                },
-            ],
+            reqs: vec![GetObjectRequest {
+                object: "files/0.json".to_string(),
+                bucket: "test2".to_string(),
+                ..Default::default()
+            }],
             index: AtomicU64::new(0),
         };
         let gcs_client = GcsInternalClient::new_with_client("test2".to_string(), mock_gcs_client)
