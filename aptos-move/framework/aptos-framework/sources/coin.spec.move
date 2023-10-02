@@ -40,12 +40,13 @@ spec aptos_framework::coin {
     }
 
     spec mint {
-        pragma opaque;
+        pragma aborts_if_is_strict;
         let addr = type_info::type_of<CoinType>().account_address;
         modifies global<CoinInfo<CoinType>>(addr);
-        aborts_if [abstract] false;
-        ensures [abstract] result.value == amount;
+        aborts_if (amount != 0) && !exists<CoinInfo<CoinType>>(addr);
+        include AbortsIfAggregatorAdd<CoinType>;
         ensures supply<CoinType> == old(supply<CoinType>) + amount;
+        ensures result.value == amount;
     }
 
     /// Get address by reflection.
@@ -106,6 +107,21 @@ spec aptos_framework::coin {
             coin.value;
     }
 
+    spec schema AbortsIfAggregatorAdd<CoinType> {
+        use aptos_framework::optional_aggregator;
+        use aptos_framework::aggregator;
+        amount: u64;
+        let addr =  type_info::type_of<CoinType>().account_address;
+        let maybe_supply = global<CoinInfo<CoinType>>(addr).supply;
+        aborts_if option::is_some(maybe_supply) && optional_aggregator::is_parallelizable(option::borrow(maybe_supply))
+            && aggregator::spec_aggregator_get_val(option::borrow(option::borrow(maybe_supply).aggregator)) + (amount as u128) > MAX_U128;
+        aborts_if option::is_some(maybe_supply) && optional_aggregator::is_parallelizable(option::borrow(maybe_supply))
+            && aggregator::spec_aggregator_get_val(option::borrow(option::borrow(maybe_supply).aggregator)) + (amount as u128) > aggregator::spec_get_limit(option::borrow(option::borrow(maybe_supply).aggregator));
+        aborts_if option::is_some(maybe_supply) && !optional_aggregator::is_parallelizable(option::borrow(maybe_supply))
+            && option::borrow(option::borrow(maybe_supply).integer).limit - option::borrow(option::borrow(maybe_supply).integer).value <
+            (amount as u128);
+    }
+
     spec schema AbortsIfNotExistCoinInfo<CoinType> {
         let addr = type_info::type_of<CoinType>().account_address;
         aborts_if !exists<CoinInfo<CoinType>>(addr);
@@ -142,7 +158,6 @@ spec aptos_framework::coin {
         _cap: &BurnCapability<CoinType>,
     ) {
         let addr =  type_info::type_of<CoinType>().account_address;
-        aborts_if !exists<CoinInfo<CoinType>>(addr);
         modifies global<CoinInfo<CoinType>>(addr);
         include AbortsIfNotExistCoinInfo<CoinType>;
         aborts_if coin.value == 0;
