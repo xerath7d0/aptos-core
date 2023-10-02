@@ -1201,6 +1201,7 @@ dependencies = [
  "aptos-consensus-types",
  "aptos-crypto",
  "aptos-db",
+ "aptos-executor-service",
  "aptos-executor-test-helpers",
  "aptos-executor-types",
  "aptos-experimental-runtimes",
