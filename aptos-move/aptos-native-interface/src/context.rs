@@ -123,4 +123,9 @@ impl<'a, 'b, 'c, 'd> SafeNativeContext<'a, 'b, 'c, 'd> {
     pub fn aggregator_snapshots_enabled(&self) -> bool {
         self.get_feature_flags().is_aggregator_snapshots_enabled()
     }
+
+    /// TODO: decide if we want to have two flags or merge with aggregator_snapshots_enabled.
+    pub fn aggregator_api_enabled(&self) -> bool {
+        self.get_feature_flags().is_aggregator_snapshots_enabled()
+    }
 }
