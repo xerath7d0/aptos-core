@@ -6,9 +6,12 @@
 #![deny(missing_docs)]
 
 //! A library supplying various cryptographic primitives
+extern crate core;
+
 pub mod bls12381;
 pub mod bulletproofs;
 pub mod compat;
+pub mod ecdsa_p256;
 pub mod ed25519;
 pub mod error;
 pub mod hash;
@@ -21,7 +24,6 @@ pub mod traits;
 pub mod validatable;
 pub mod webauthn;
 pub mod x25519;
-pub mod ecdsa_p256;
 
 #[cfg(test)]
 mod unit_tests;
