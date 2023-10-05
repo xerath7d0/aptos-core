@@ -112,7 +112,11 @@ fn discard_error_vm_status(vm_status: VMStatus) -> (VMStatus, VMOutput) {
     (vm_status, output)
 }
 
-pub struct AptosVM(pub(crate) AptosVMImpl);
+pub struct AptosVM {
+    #[allow(dead_code)]
+    is_simulation: bool,
+    pub(crate) vm_impl: AptosVMImpl,
+}
 
 macro_rules! unwrap_or_discard {
     ($res:expr) => {
@@ -125,17 +129,19 @@ macro_rules! unwrap_or_discard {
 
 impl AptosVM {
     pub fn new(resolver: &impl AptosMoveResolver) -> Self {
-        Self(AptosVMImpl::new(resolver))
+        Self {
+            is_simulation: false,
+            vm_impl: AptosVMImpl::new(resolver),
+        }
     }
 
     pub fn new_from_executor_view(executor_view: &impl ExecutorView) -> Self {
-        Self(AptosVMImpl::new(&StorageAdapter::from_borrowed(
-            executor_view,
-        )))
+        let resolver = StorageAdapter::from_borrowed(executor_view);
+        Self::new(&resolver)
     }
 
     pub fn new_from_state_view(state_view: &impl StateView) -> Self {
-        Self(AptosVMImpl::new(&state_view.as_move_resolver()))
+        Self::new(&state_view.as_move_resolver())
     }
 
     /// Sets execution concurrency level when invoked the first time.
@@ -233,16 +239,7 @@ impl AptosVM {
     }
 
     pub fn internals(&self) -> AptosVMInternals {
-        AptosVMInternals::new(&self.0)
-    }
-
-    /// Load a module into its internal MoveVM's code cache.
-    pub fn load_module(
-        &self,
-        module_id: &ModuleId,
-        resolver: &impl AptosMoveResolver,
-    ) -> VMResult<Arc<CompiledModule>> {
-        self.0.load_module(module_id, resolver)
+        AptosVMInternals::new(&self.vm_impl)
     }
 
     /// Generates a transaction output for a transaction that encountered errors during the
@@ -273,8 +270,8 @@ impl AptosVM {
     ) -> StorageAdapter<'r, R> {
         StorageAdapter::from_borrowed_with_cached_config(
             executor_view,
-            self.0.get_gas_feature_version(),
-            self.0.get_features(),
+            self.vm_impl.get_gas_feature_version(),
+            self.vm_impl.get_features(),
         )
     }
 
@@ -307,13 +304,13 @@ impl AptosVM {
     ) -> (VMStatus, VMOutput) {
         // Clear side effects: create new session and clear refunds from fee statement.
         let mut session = self
-            .0
+            .vm_impl
             .new_session(resolver, SessionId::epilogue_meta(txn_data));
         let fee_statement = AptosVM::fee_statement_from_gas_meter(txn_data, gas_meter, 0);
 
         match TransactionStatus::from_vm_status(
             error_code.clone(),
-            self.0
+            self.vm_impl
                 .get_features()
                 .is_enabled(FeatureFlag::CHARGE_INVARIANT_VIOLATION),
         ) {
@@ -325,7 +322,7 @@ impl AptosVM {
                         code,
                         ..
                     } => {
-                        let info = self.0.extract_abort_info(&module, code);
+                        let info = self.vm_impl.extract_abort_info(&module, code);
                         ExecutionStatus::MoveAbort {
                             location: AbortLocation::Module(module),
                             code,
@@ -340,7 +337,7 @@ impl AptosVM {
                 // so even if the previous failure occurred while running the epilogue, it
                 // should not fail now. If it somehow fails here, there is no choice but to
                 // discard the transaction.
-                if let Err(e) = self.0.run_failure_epilogue(
+                if let Err(e) = self.vm_impl.run_failure_epilogue(
                     &mut session,
                     gas_meter.balance(),
                     fee_statement,
@@ -380,7 +377,7 @@ impl AptosVM {
             u64::from(respawned_session.get_storage_fee_refund()),
         );
         respawned_session.execute(|session| {
-            self.0.run_success_epilogue(
+            self.vm_impl.run_success_epilogue(
                 session,
                 gas_meter.balance(),
                 fee_statement,
@@ -411,7 +408,7 @@ impl AptosVM {
             script_fn.ty_args(),
         )?;
         let struct_constructors = self
-            .0
+            .vm_impl
             .get_features()
             .is_enabled(FeatureFlag::STRUCT_CONSTRUCTORS);
         let args = verifier::transaction_arg_validation::validate_combine_signer_and_txn_args(
@@ -469,7 +466,7 @@ impl AptosVM {
                             txn_data.senders(),
                             convert_txn_args(script.args()),
                             &loaded_func,
-                            self.0
+                            self.vm_impl
                                 .get_features()
                                 .is_enabled(FeatureFlag::STRUCT_CONSTRUCTORS),
                         )?;
@@ -539,7 +536,11 @@ impl AptosVM {
             txn_data.transaction_size,
             txn_data.gas_unit_price,
         )?;
-        if !self.0.get_features().is_storage_deletion_refund_enabled() {
+        if !self
+            .vm_impl
+            .get_features()
+            .is_storage_deletion_refund_enabled()
+        {
             storage_refund = 0.into();
         }
 
@@ -655,7 +656,7 @@ impl AptosVM {
             // necessary here as executing the underlying call can fail without this function
             // returning an error to execute_user_transaction.
             if *new_published_modules_loaded {
-                self.0.mark_loader_cache_as_invalid();
+                self.vm_impl.mark_loader_cache_as_invalid();
             };
             self.failure_multisig_payload_cleanup(
                 resolver,
@@ -846,7 +847,7 @@ impl AptosVM {
     /// Deserialize a module bundle.
     fn deserialize_module_bundle(&self, modules: &ModuleBundle) -> VMResult<Vec<CompiledModule>> {
         let max_version = if self
-            .0
+            .vm_impl
             .get_features()
             .is_enabled(FeatureFlag::VM_BINARY_FORMAT_V6)
         {
@@ -904,7 +905,7 @@ impl AptosVM {
                 true,
                 true,
                 !self
-                    .0
+                    .vm_impl
                     .get_features()
                     .is_enabled(FeatureFlag::TREAT_FRIEND_AS_PRIVATE),
             ),
@@ -981,7 +982,7 @@ impl AptosVM {
                     true,
                     true,
                     !self
-                        .0
+                        .vm_impl
                         .get_features()
                         .is_enabled(FeatureFlag::TREAT_FRIEND_AS_PRIVATE),
                 ),
@@ -1033,15 +1034,15 @@ impl AptosVM {
             }
             aptos_framework::verify_module_metadata(
                 m,
-                self.0.get_features(),
-                self.0.get_timed_features(),
+                self.vm_impl.get_features(),
+                self.vm_impl.get_timed_features(),
             )
             .map_err(|err| Self::metadata_validation_error(&err.to_string()))?;
         }
         verifier::resource_groups::validate_resource_groups(
             session,
             modules,
-            self.0
+            self.vm_impl
                 .get_features()
                 .is_enabled(FeatureFlag::SAFER_RESOURCE_GROUPS),
         )?;
@@ -1068,9 +1069,11 @@ impl AptosVM {
     ) -> Result<MemoryTrackedGasMeter<StandardGasMeter<StandardGasAlgebra>>, VMStatus> {
         Ok(MemoryTrackedGasMeter::new(StandardGasMeter::new(
             StandardGasAlgebra::new(
-                self.0.get_gas_feature_version(),
-                self.0.get_gas_parameters(log_context)?.vm.clone(),
-                self.0.get_storage_gas_parameters(log_context)?.clone(),
+                self.vm_impl.get_gas_feature_version(),
+                self.vm_impl.get_gas_parameters(log_context)?.vm.clone(),
+                self.vm_impl
+                    .get_storage_gas_parameters(log_context)?
+                    .clone(),
                 balance,
             ),
         )))
@@ -1086,7 +1089,7 @@ impl AptosVM {
         // Revalidate the transaction.
         let txn_data = TransactionMetadata::new(txn);
         let mut session = self
-            .0
+            .vm_impl
             .new_session(resolver, SessionId::prologue_meta(&txn_data));
         unwrap_or_discard!(self.validate_signed_transaction(
             &mut session,
@@ -1097,7 +1100,7 @@ impl AptosVM {
             false,
         ));
 
-        if self.0.get_gas_feature_version() >= 1 {
+        if self.vm_impl.get_gas_feature_version() >= 1 {
             // Create a new session so that the data cache is flushed.
             // This is to ensure we correctly charge for loading certain resources, even if they
             // have been previously cached in the prologue.
@@ -1106,10 +1109,13 @@ impl AptosVM {
             // By releasing resource group cache, we start with a fresh slate for resource group
             // cost accounting.
             resolver.release_resource_group_cache();
-            session = self.0.new_session(resolver, SessionId::txn_meta(&txn_data));
+            session = self
+                .vm_impl
+                .new_session(resolver, SessionId::txn_meta(&txn_data));
         }
 
-        let storage_gas_params = unwrap_or_discard!(self.0.get_storage_gas_parameters(log_context));
+        let storage_gas_params =
+            unwrap_or_discard!(self.vm_impl.get_storage_gas_parameters(log_context));
 
         // We keep track of whether any newly published modules are loaded into the Vm's loader
         // cache as part of executing transactions. This would allow us to decide whether the cache
@@ -1190,12 +1196,12 @@ impl AptosVM {
         // None of the modules in the bundle will be committed to storage,
         // but some of them may have ended up in the cache.
         if new_published_modules_loaded {
-            self.0.mark_loader_cache_as_invalid();
+            self.vm_impl.mark_loader_cache_as_invalid();
         };
 
         let txn_status = TransactionStatus::from_vm_status(
             err.clone(),
-            self.0
+            self.vm_impl
                 .get_features()
                 .is_enabled(FeatureFlag::CHARGE_INVARIANT_VIOLATION),
         );
@@ -1241,9 +1247,11 @@ impl AptosVM {
         // TODO(Gas): avoid creating txn metadata twice.
         let balance = TransactionMetadata::new(txn).max_gas_amount();
         let mut gas_meter = make_gas_meter(
-            self.0.get_gas_feature_version(),
-            self.0.get_gas_parameters(log_context)?.vm.clone(),
-            self.0.get_storage_gas_parameters(log_context)?.clone(),
+            self.vm_impl.get_gas_feature_version(),
+            self.vm_impl.get_gas_parameters(log_context)?.vm.clone(),
+            self.vm_impl
+                .get_storage_gas_parameters(log_context)?
+                .clone(),
             balance,
         )?;
         let (status, output) =
@@ -1260,15 +1268,16 @@ impl AptosVM {
         session_id: SessionId,
     ) -> Result<VMChangeSet, VMStatus> {
         let mut gas_meter = UnmeteredGasMeter;
-        let change_set_configs =
-            ChangeSetConfigs::unlimited_at_gas_feature_version(self.0.get_gas_feature_version());
+        let change_set_configs = ChangeSetConfigs::unlimited_at_gas_feature_version(
+            self.vm_impl.get_gas_feature_version(),
+        );
 
         match write_set_payload {
             WriteSetPayload::Direct(change_set) => {
                 VMChangeSet::try_from_storage_change_set(change_set.clone(), &change_set_configs)
             },
             WriteSetPayload::Script { script, execute_as } => {
-                let mut tmp_session = self.0.new_session(resolver, session_id);
+                let mut tmp_session = self.vm_impl.new_session(resolver, session_id);
                 let senders = match txn_sender {
                     None => vec![*execute_as],
                     Some(sender) => vec![sender, *execute_as],
@@ -1282,7 +1291,7 @@ impl AptosVM {
                         senders,
                         convert_txn_args(script.args()),
                         &loaded_func,
-                        self.0
+                        self.vm_impl
                             .get_features()
                             .is_enabled(FeatureFlag::STRUCT_CONSTRUCTORS),
                     )?;
@@ -1390,7 +1399,7 @@ impl AptosVM {
         };
         let mut gas_meter = UnmeteredGasMeter;
         let mut session = self
-            .0
+            .vm_impl
             .new_session(resolver, SessionId::block_meta(&block_metadata));
 
         let args = serialize_values(&block_metadata.get_prologue_move_args(txn_data.sender));
@@ -1414,7 +1423,7 @@ impl AptosVM {
             FeeStatement::zero(),
             ExecutionStatus::Success,
             &self
-                .0
+                .vm_impl
                 .get_storage_gas_parameters(log_context)?
                 .change_set_configs,
         )?;
@@ -1452,25 +1461,26 @@ impl AptosVM {
         let log_context = AdapterLogSchema::new(state_view.id(), 0);
         let mut gas_meter =
             MemoryTrackedGasMeter::new(StandardGasMeter::new(StandardGasAlgebra::new(
-                vm.0.get_gas_feature_version(),
-                vm.0.get_gas_parameters(&log_context)?.vm.clone(),
-                vm.0.get_storage_gas_parameters(&log_context)?.clone(),
+                vm.vm_impl.get_gas_feature_version(),
+                vm.vm_impl.get_gas_parameters(&log_context)?.vm.clone(),
+                vm.vm_impl.get_storage_gas_parameters(&log_context)?.clone(),
                 gas_budget,
             )));
 
         let executor_view = state_view.as_executor_view();
         let resolver = vm.as_move_resolver(&executor_view);
-        let mut session = vm.0.new_session(&resolver, SessionId::Void);
+        let mut session = vm.vm_impl.new_session(&resolver, SessionId::Void);
 
         let func_inst = session.load_function(&module_id, &func_name, &type_args)?;
-        let metadata = vm.0.extract_module_metadata(&module_id);
+        let metadata = vm.vm_impl.extract_module_metadata(&module_id);
         let arguments = verifier::view_function::validate_view_function(
             &mut session,
             arguments,
             func_name.as_ident_str(),
             &func_inst,
             metadata.as_ref().map(Arc::as_ref),
-            vm.0.get_features()
+            vm.vm_impl
+                .get_features()
                 .is_enabled(FeatureFlag::STRUCT_CONSTRUCTORS),
         )?;
 
@@ -1526,26 +1536,33 @@ impl AptosVM {
     ) -> Result<(), VMStatus> {
         match payload {
             TransactionPayload::Script(_) => {
-                self.0.check_gas(resolver, txn_data, log_context)?;
-                self.0.run_script_prologue(session, txn_data, log_context)
+                self.vm_impl.check_gas(resolver, txn_data, log_context)?;
+                self.vm_impl
+                    .run_script_prologue(session, txn_data, log_context)
             },
             TransactionPayload::EntryFunction(_) => {
                 // NOTE: Script and EntryFunction shares the same prologue
-                self.0.check_gas(resolver, txn_data, log_context)?;
-                self.0.run_script_prologue(session, txn_data, log_context)
+                self.vm_impl.check_gas(resolver, txn_data, log_context)?;
+                self.vm_impl
+                    .run_script_prologue(session, txn_data, log_context)
             },
             TransactionPayload::Multisig(multisig_payload) => {
-                self.0.check_gas(resolver, txn_data, log_context)?;
+                self.vm_impl.check_gas(resolver, txn_data, log_context)?;
                 // Still run script prologue for multisig transaction to ensure the same tx
                 // validations are still run for this multisig execution tx, which is submitted by
                 // one of the owners.
-                self.0.run_script_prologue(session, txn_data, log_context)?;
+                self.vm_impl
+                    .run_script_prologue(session, txn_data, log_context)?;
                 // Skip validation if this is part of tx simulation.
                 // This allows simulating multisig txs without having to first create the multisig
                 // tx.
                 if !is_simulation {
-                    self.0
-                        .run_multisig_prologue(session, txn_data, multisig_payload, log_context)
+                    self.vm_impl.run_multisig_prologue(
+                        session,
+                        txn_data,
+                        multisig_payload,
+                        log_context,
+                    )
                 } else {
                     Ok(())
                 }
@@ -1556,8 +1573,9 @@ impl AptosVM {
                 if MODULE_BUNDLE_DISALLOWED.load(Ordering::Relaxed) {
                     return Err(VMStatus::error(StatusCode::FEATURE_UNDER_GATING, None));
                 }
-                self.0.check_gas(resolver, txn_data, log_context)?;
-                self.0.run_module_prologue(session, txn_data, log_context)
+                self.vm_impl.check_gas(resolver, txn_data, log_context)?;
+                self.vm_impl
+                    .run_module_prologue(session, txn_data, log_context)
             },
         }
     }
@@ -1590,7 +1608,9 @@ impl AptosVM {
     ) -> (VMStatus, VMOutput) {
         // Revalidate the transaction.
         let txn_data = TransactionMetadata::new(txn);
-        let mut session = self.0.new_session(resolver, SessionId::txn_meta(&txn_data));
+        let mut session = self
+            .vm_impl
+            .new_session(resolver, SessionId::txn_meta(&txn_data));
         unwrap_or_discard!(self.validate_signed_transaction(
             &mut session,
             resolver,
@@ -1600,7 +1620,8 @@ impl AptosVM {
             true,
         ));
 
-        let storage_gas_params = unwrap_or_discard!(self.0.get_storage_gas_parameters(log_context));
+        let storage_gas_params =
+            unwrap_or_discard!(self.vm_impl.get_storage_gas_parameters(log_context));
 
         let mut new_published_modules_loaded = false;
         let result = match txn.payload() {
@@ -1887,7 +1908,7 @@ impl VMValidator for AptosVM {
         let log_context = AdapterLogSchema::new(state_view.id(), 0);
 
         if !self
-            .0
+            .vm_impl
             .get_features()
             .is_enabled(FeatureFlag::SECP256K1_ECDSA_AUTHENTICATOR)
         {
@@ -1908,7 +1929,7 @@ impl VMValidator for AptosVM {
         let txn_data = TransactionMetadata::new(&txn);
 
         let mut session = self
-            .0
+            .vm_impl
             .new_session(&resolver, SessionId::prologue_meta(&txn_data));
         let validation_result = self.validate_signed_transaction(
             &mut session,
