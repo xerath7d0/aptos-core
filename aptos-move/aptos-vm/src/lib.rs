@@ -150,7 +150,7 @@ pub trait VMSimulator {
     fn simulate_signed_transaction(
         transaction: SignedTransaction,
         state_view: &(impl StateView + Sync),
-    ) -> TransactionOutput;
+    ) -> Result<TransactionOutput, VMStatus>;
 }
 
 /// This trait describes the VM's execution interface.
