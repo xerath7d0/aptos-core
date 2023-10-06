@@ -14,7 +14,7 @@ use crate::{
     NUM_STATE_SHARDS, OTHER_TIMERS_SECONDS,
 };
 use anyhow::{ensure, Result};
-use aptos_config::config::{RocksdbConfig, RocksdbConfigs};
+use aptos_config::config::{RocksdbConfig, RocksdbConfigs, ShardedDbPathConfig};
 use aptos_crypto::{hash::CryptoHash, HashValue};
 use aptos_experimental_runtimes::thread_manager::THREAD_MANAGER;
 use aptos_jellyfish_merkle::{
@@ -65,11 +65,16 @@ pub struct StateMerkleDb {
 impl StateMerkleDb {
     pub(crate) fn new<P: AsRef<Path>>(
         db_root_path: P,
+        db_path_overrides: Option<ShardedDbPathConfig>,
         rocksdb_configs: RocksdbConfigs,
         readonly: bool,
         max_nodes_per_lru_cache_shard: usize,
     ) -> Result<Self> {
         let sharding = rocksdb_configs.enable_storage_sharding;
+        ensure!(
+            db_path_overrides.is_none() || sharding,
+            "Path override is not allowed for non-sharded StateMerkleDb."
+        );
         let state_merkle_db_config = rocksdb_configs.state_merkle_db_config;
         // TODO(grao): Currently when this value is set to 0 we disable both caches. This is
         // hacky, need to revisit.
@@ -101,6 +106,7 @@ impl StateMerkleDb {
 
         Self::open(
             db_root_path,
+            db_path_overrides,
             state_merkle_db_config,
             readonly,
             enable_cache,
@@ -164,8 +170,10 @@ impl StateMerkleDb {
             enable_storage_sharding: sharding,
             ..Default::default()
         };
+        // TODO(grao): Use None db_path_overrides for now, will revisit later.
         let state_merkle_db = Self::new(
             db_root_path,
+            /*db_path_overrides=*/ None,
             rocksdb_configs,
             /*readonly=*/ false,
             /*max_nodes_per_lru_cache_shard=*/ 0,
@@ -535,14 +543,22 @@ impl StateMerkleDb {
 
     fn open<P: AsRef<Path>>(
         db_root_path: P,
+        db_path_overrides: Option<ShardedDbPathConfig>,
         state_merkle_db_config: RocksdbConfig,
         readonly: bool,
         enable_cache: bool,
         version_caches: HashMap<Option<u8>, VersionedNodeCache>,
         lru_cache: LruNodeCache,
     ) -> Result<Self> {
-        let state_merkle_metadata_db_path =
-            Self::metadata_db_path(db_root_path.as_ref(), /*sharding=*/ true);
+        let state_merkle_metadata_db_path = Self::metadata_db_path(
+            db_path_overrides
+                .as_ref()
+                .map(|overrides| overrides.metadata_path.as_ref())
+                .flatten()
+                .map(|p| p.as_path())
+                .unwrap_or(db_root_path.as_ref()),
+            /*sharding=*/ true,
+        );
 
         let state_merkle_metadata_db = Arc::new(Self::open_db(
             state_merkle_metadata_db_path.clone(),
@@ -556,9 +572,20 @@ impl StateMerkleDb {
             "Opened state merkle metadata db!"
         );
 
+        let mut shard_path_overrides = arr![None; 16];
+        if let Some(db_path_overrides) = db_path_overrides {
+            for (shard_id, shard_path) in db_path_overrides.get_shard_paths()? {
+                shard_path_overrides[shard_id as usize] = Some(shard_path);
+            }
+        }
+
         let mut shard_id: usize = 0;
         let state_merkle_db_shards = arr![{
-            let db = Self::open_shard(db_root_path.as_ref(), shard_id as u8, &state_merkle_db_config, readonly)?;
+            let shard_root_path = shard_path_overrides[shard_id]
+                .as_ref()
+                .map(|p| p.as_path())
+                .unwrap_or(db_root_path.as_ref());
+            let db = Self::open_shard(shard_root_path, shard_id as u8, &state_merkle_db_config, readonly)?;
             shard_id += 1;
             Arc::new(db)
         }; 16];

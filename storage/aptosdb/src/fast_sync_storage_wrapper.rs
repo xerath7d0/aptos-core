@@ -45,7 +45,8 @@ impl FastSyncStorageWrapper {
         let mut db_dir = config.storage.dir();
         let db_main = AptosDB::open(
             db_dir.as_path(),
-            false,
+            /*db_path_overrides=*/ None,
+            /*readonly=*/ false,
             config.storage.storage_pruner_config,
             config.storage.rocksdb_configs,
             config.storage.enable_indexer,
@@ -65,7 +66,8 @@ impl FastSyncStorageWrapper {
             db_dir.push(SECONDARY_DB_DIR);
             let secondary_db = AptosDB::open(
                 db_dir.as_path(),
-                false,
+                /*db_path_overrides=*/ None,
+                /*readonly=*/ false,
                 config.storage.storage_pruner_config,
                 config.storage.rocksdb_configs,
                 config.storage.enable_indexer,

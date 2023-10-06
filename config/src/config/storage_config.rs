@@ -6,10 +6,13 @@ use crate::{
     config::{config_sanitizer::ConfigSanitizer, node_config_loader::NodeType, Error, NodeConfig},
     utils,
 };
+use anyhow::Result;
 use aptos_logger::warn;
 use aptos_types::chain_id::ChainId;
+use number_range::NumberRangeOptions;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
 };
@@ -18,6 +21,46 @@ use std::{
 pub const DEFAULT_MAX_NUM_NODES_PER_LRU_CACHE_SHARD: usize = 1 << 13;
 
 pub const BUFFERED_STATE_TARGET_ITEMS: usize = 100_000;
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DbPathConfig {
+    pub ledger_db_path: Option<PathBuf>,
+    pub state_kv_db_path: Option<ShardedDbPathConfig>,
+    pub state_merkle_db_path: Option<ShardedDbPathConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShardedDbPathConfig {
+    pub metadata_path: Option<PathBuf>,
+    pub shard_paths: Vec<ShardPath>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShardPath {
+    pub shards: String,
+    pub path: PathBuf,
+}
+
+impl ShardedDbPathConfig {
+    pub fn get_shard_paths(&self) -> Result<HashMap<u8, PathBuf>> {
+        let mut result = HashMap::new();
+        for shard_path in &self.shard_paths {
+            let shard_ids = NumberRangeOptions::<u8>::new()
+                .with_list_sep(',')
+                .with_range_sep('-')
+                .parse(shard_path.shards.as_str())?
+                .collect::<Vec<u8>>();
+            for shard_id in shard_ids {
+                result.insert(shard_id, shard_path.path.clone());
+            }
+        }
+
+        Ok(result)
+    }
+}
 
 /// Port selected RocksDB options for tuning underlying rocksdb instance of AptosDB.
 /// see <https://github.com/facebook/rocksdb/blob/master/include/rocksdb/options.h>
@@ -113,6 +156,10 @@ pub struct StorageConfig {
     /// since genesis. To recover operation after data loss, or to bootstrap a node in fast sync
     /// mode, the indexer db needs to be copied in from another node.
     pub enable_indexer: bool,
+    /// Fine grained control for db paths of individal databases/shards.
+    /// If not specificed, will use `dir` as default.
+    /// Only allowed when sharding is enabled.
+    pub db_path_overrides: Option<DbPathConfig>,
 }
 
 pub const NO_OP_STORAGE_PRUNER_CONFIG: PrunerConfig = PrunerConfig {
@@ -259,6 +306,7 @@ impl Default for StorageConfig {
             data_dir: PathBuf::from("/opt/aptos/data"),
             rocksdb_configs: RocksdbConfigs::default(),
             enable_indexer: false,
+            db_path_overrides: None,
             buffered_state_target_items: BUFFERED_STATE_TARGET_ITEMS,
             max_num_nodes_per_lru_cache_shard: DEFAULT_MAX_NUM_NODES_PER_LRU_CACHE_SHARD,
         }
@@ -329,6 +377,13 @@ impl ConfigSanitizer for StorageConfig {
             return Err(Error::ConfigSanitizerFailed(
                 sanitizer_name,
                 "user_pruning_window_offset is larger than the ledger prune window, the API will refuse to return any data.".to_string(),
+            ));
+        }
+
+        if !config.rocksdb_configs.enable_storage_sharding && config.db_path_overrides.is_some() {
+            return Err(Error::ConfigSanitizerFailed(
+                sanitizer_name,
+                "db_path_overrides is allowed only if sharding is enabled.".to_string(),
             ));
         }
 

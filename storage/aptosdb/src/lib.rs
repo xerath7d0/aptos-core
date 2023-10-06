@@ -70,7 +70,7 @@ use crate::{
 };
 use anyhow::{bail, ensure, Result};
 use aptos_config::config::{
-    PrunerConfig, RocksdbConfig, RocksdbConfigs, NO_OP_STORAGE_PRUNER_CONFIG,
+    DbPathConfig, PrunerConfig, RocksdbConfig, RocksdbConfigs, NO_OP_STORAGE_PRUNER_CONFIG,
 };
 #[cfg(any(test, feature = "fuzzing"))]
 use aptos_config::config::{
@@ -401,6 +401,7 @@ impl AptosDB {
 
     fn open_internal<P: AsRef<Path> + Clone>(
         db_root_path: P,
+        db_path_overrides: Option<DbPathConfig>,
         readonly: bool,
         pruner_config: PrunerConfig,
         rocksdb_configs: RocksdbConfigs,
@@ -416,6 +417,7 @@ impl AptosDB {
 
         let (ledger_db, state_merkle_db, state_kv_db) = Self::open_dbs(
             db_root_path.as_ref(),
+            db_path_overrides,
             rocksdb_configs,
             readonly,
             max_num_nodes_per_lru_cache_shard,
@@ -441,6 +443,7 @@ impl AptosDB {
 
     pub fn open<P: AsRef<Path> + Clone>(
         db_root_path: P,
+        db_path_overrides: Option<DbPathConfig>,
         readonly: bool,
         pruner_config: PrunerConfig,
         rocksdb_configs: RocksdbConfigs,
@@ -450,6 +453,7 @@ impl AptosDB {
     ) -> Result<Self> {
         Self::open_internal(
             db_root_path,
+            db_path_overrides,
             readonly,
             pruner_config,
             rocksdb_configs,
@@ -462,6 +466,7 @@ impl AptosDB {
 
     pub fn open_kv_only<P: AsRef<Path> + Clone>(
         db_root_path: P,
+        db_path_overrides: Option<DbPathConfig>,
         readonly: bool,
         pruner_config: PrunerConfig,
         rocksdb_configs: RocksdbConfigs,
@@ -471,6 +476,7 @@ impl AptosDB {
     ) -> Result<Self> {
         Self::open_internal(
             db_root_path,
+            db_path_overrides,
             readonly,
             pruner_config,
             rocksdb_configs,
@@ -483,19 +489,39 @@ impl AptosDB {
 
     pub fn open_dbs<P: AsRef<Path> + Clone>(
         db_root_path: P,
+        db_path_overrides: Option<DbPathConfig>,
         rocksdb_configs: RocksdbConfigs,
         readonly: bool,
         max_num_nodes_per_lru_cache_shard: usize,
     ) -> Result<(LedgerDb, StateMerkleDb, StateKvDb)> {
-        let ledger_db = LedgerDb::new(db_root_path.as_ref(), rocksdb_configs, readonly)?;
+        let ledger_db = LedgerDb::new(
+            db_path_overrides
+                .as_ref()
+                .map(|overrides| overrides.ledger_db_path.as_ref())
+                .flatten()
+                .map(|p| p.as_path())
+                .unwrap_or(db_root_path.as_ref()),
+            rocksdb_configs,
+            readonly,
+        )?;
         let state_kv_db = StateKvDb::new(
             db_root_path.as_ref(),
+            db_path_overrides
+                .as_ref()
+                .map(|overrides| overrides.state_kv_db_path.as_ref())
+                .flatten()
+                .cloned(),
             rocksdb_configs,
             readonly,
             ledger_db.metadata_db_arc(),
         )?;
         let state_merkle_db = StateMerkleDb::new(
             db_root_path,
+            db_path_overrides
+                .as_ref()
+                .map(|overrides| overrides.state_merkle_db_path.as_ref())
+                .flatten()
+                .cloned(),
             rocksdb_configs,
             readonly,
             max_num_nodes_per_lru_cache_shard,

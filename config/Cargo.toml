@@ -30,6 +30,7 @@ get_if_addrs = { workspace = true }
 maplit = { workspace = true }
 mirai-annotations = { workspace = true }
 num_cpus = { workspace = true }
+number_range = { workspace = true }
 poem-openapi = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }

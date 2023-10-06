@@ -150,6 +150,7 @@ impl GenesisInfo {
         let path = TempPath::new();
         let aptosdb = AptosDB::open(
             &path,
+            /*db_path_overrides=*/ None,
             false,
             NO_OP_STORAGE_PRUNER_CONFIG,
             RocksdbConfigs::default(),

@@ -9,8 +9,8 @@ use crate::{
     utils::truncation_helper::{get_state_kv_commit_progress, truncate_state_kv_db_shards},
     NUM_STATE_SHARDS,
 };
-use anyhow::Result;
-use aptos_config::config::{RocksdbConfig, RocksdbConfigs};
+use anyhow::{ensure, Result};
+use aptos_config::config::{RocksdbConfig, RocksdbConfigs, ShardedDbPathConfig};
 use aptos_experimental_runtimes::thread_manager::THREAD_MANAGER;
 use aptos_logger::prelude::info;
 use aptos_rocksdb_options::gen_rocksdb_options;
@@ -36,11 +36,16 @@ impl StateKvDb {
     // on different disks.
     pub(crate) fn new<P: AsRef<Path>>(
         db_root_path: P,
+        db_path_overrides: Option<ShardedDbPathConfig>,
         rocksdb_configs: RocksdbConfigs,
         readonly: bool,
         ledger_db: Arc<DB>,
     ) -> Result<Self> {
         let sharding = rocksdb_configs.enable_storage_sharding;
+        ensure!(
+            db_path_overrides.is_none() || sharding,
+            "Path override is not allowed for non-sharded StateKvDb."
+        );
         if !sharding {
             info!("State K/V DB is not enabled!");
             return Ok(Self {
@@ -50,15 +55,28 @@ impl StateKvDb {
             });
         }
 
-        Self::open(db_root_path, rocksdb_configs.state_kv_db_config, readonly)
+        Self::open(
+            db_root_path,
+            db_path_overrides,
+            rocksdb_configs.state_kv_db_config,
+            readonly,
+        )
     }
 
     pub(crate) fn open<P: AsRef<Path>>(
         db_root_path: P,
+        db_path_overrides: Option<ShardedDbPathConfig>,
         state_kv_db_config: RocksdbConfig,
         readonly: bool,
     ) -> Result<Self> {
-        let state_kv_metadata_db_path = Self::metadata_db_path(db_root_path.as_ref());
+        let state_kv_metadata_db_path = Self::metadata_db_path(
+            db_path_overrides
+                .as_ref()
+                .map(|overrides| overrides.metadata_path.as_ref())
+                .flatten()
+                .map(|p| p.as_path())
+                .unwrap_or(db_root_path.as_ref()),
+        );
 
         let state_kv_metadata_db = Arc::new(Self::open_db(
             state_kv_metadata_db_path.clone(),
@@ -72,10 +90,21 @@ impl StateKvDb {
             "Opened state kv metadata db!"
         );
 
+        let mut shard_path_overrides = arr![None; 16];
+        if let Some(db_path_overrides) = db_path_overrides {
+            for (shard_id, shard_path) in db_path_overrides.get_shard_paths()? {
+                shard_path_overrides[shard_id as usize] = Some(shard_path);
+            }
+        }
+
         let state_kv_db_shards = {
             let mut shard_id: usize = 0;
             arr![{
-                let db = Self::open_shard(db_root_path.as_ref(), shard_id as u8, &state_kv_db_config, readonly)?;
+                let shard_root_path = shard_path_overrides[shard_id]
+                    .as_ref()
+                    .map(|p| p.as_path())
+                    .unwrap_or(db_root_path.as_ref());
+                let db = Self::open_shard(shard_root_path, shard_id as u8, &state_kv_db_config, readonly)?;
                 shard_id += 1;
                 Arc::new(db)
             }; 16]
@@ -138,7 +167,13 @@ impl StateKvDb {
         db_root_path: impl AsRef<Path>,
         cp_root_path: impl AsRef<Path>,
     ) -> Result<()> {
-        let state_kv_db = Self::open(db_root_path, RocksdbConfig::default(), false)?;
+        // TODO(grao): Use None db_path_overrides for now, will revisit later.
+        let state_kv_db = Self::open(
+            db_root_path,
+            /*db_path_overrides=*/ None,
+            RocksdbConfig::default(),
+            false,
+        )?;
         let cp_state_kv_db_path = cp_root_path.as_ref().join(STATE_KV_DB_FOLDER_NAME);
 
         info!("Creating state_kv_db checkpoint at: {cp_state_kv_db_path:?}");
