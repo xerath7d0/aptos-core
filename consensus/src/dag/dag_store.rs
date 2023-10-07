@@ -60,7 +60,8 @@ impl Dag {
         // Reconstruct the continuous dag starting from start_round and gc unrelated nodes
         let mut dag = Self::new_empty(epoch_state, storage.clone(), start_round, window_size);
         for (digest, certified_node) in all_nodes {
-            if dag.add_node(certified_node).is_err() {
+            if let Err(e) = dag.add_node(certified_node) {
+                debug!("Delete node after bootstrap due to {}", e);
                 to_prune.push(digest);
             }
         }
@@ -330,11 +331,17 @@ impl Dag {
     pub fn bitmask(&self, target_round: Round) -> DagSnapshotBitmask {
         let lowest_round = self.lowest_incomplete_round();
 
-        let bitmask = self
+        let mut bitmask: Vec<_> = self
             .nodes_by_round
-            .range(lowest_round..target_round)
+            .range(lowest_round..=target_round)
             .map(|(_, round_nodes)| round_nodes.iter().map(|node| node.is_some()).collect())
             .collect();
+
+        bitmask.resize((target_round - lowest_round + 1) as usize, vec![
+            false;
+            self.author_to_index
+                .len()
+        ]);
 
         DagSnapshotBitmask::new(lowest_round, bitmask)
     }
