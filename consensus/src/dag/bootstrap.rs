@@ -7,7 +7,7 @@ use super::{
     dag_fetcher::{DagFetcher, DagFetcherService, FetchRequestHandler},
     dag_handler::NetworkHandler,
     dag_network::TDAGNetworkSender,
-    dag_state_sync::{DagStateSynchronizer, StateSyncTrigger, DAG_WINDOW},
+    dag_state_sync::{DagStateSynchronizer, StateSyncTrigger},
     dag_store::Dag,
     order_rule::OrderRule,
     rb_handler::NodeBroadcastHandler,
@@ -31,12 +31,14 @@ use aptos_channels::{
     aptos_channel::{self, Receiver},
     message_queues::QueueStyle,
 };
+use aptos_config::config::{DagConsensusConfig, DagRoundStateConfig, ReliableBroadcastConfig};
 use aptos_consensus_types::common::{Author, Round};
 use aptos_infallible::RwLock;
 use aptos_logger::{debug, error};
 use aptos_reliable_broadcast::{RBNetworkSender, ReliableBroadcast};
 use aptos_types::{
-    epoch_state::EpochState, ledger_info::LedgerInfo, validator_signer::ValidatorSigner,
+    epoch_state::EpochState, ledger_info::LedgerInfo, on_chain_config::DagConsensusConfigV1,
+    validator_signer::ValidatorSigner,
 };
 use futures_channel::{
     mpsc::{UnboundedReceiver, UnboundedSender},
@@ -48,6 +50,8 @@ use tokio_retry::strategy::ExponentialBackoff;
 
 pub struct DagBootstrapper {
     self_peer: Author,
+    config: DagConsensusConfig,
+    onchain_config: DagConsensusConfigV1,
     signer: Arc<ValidatorSigner>,
     epoch_state: Arc<EpochState>,
     storage: Arc<dyn DAGStorage>,
@@ -63,6 +67,8 @@ pub struct DagBootstrapper {
 impl DagBootstrapper {
     pub fn new(
         self_peer: Author,
+        config: DagConsensusConfig,
+        onchain_config: DagConsensusConfigV1,
         signer: Arc<ValidatorSigner>,
         epoch_state: Arc<EpochState>,
         storage: Arc<dyn DAGStorage>,
@@ -76,6 +82,8 @@ impl DagBootstrapper {
     ) -> Self {
         Self {
             self_peer,
+            config,
+            onchain_config,
             signer,
             epoch_state,
             storage,
@@ -120,6 +128,7 @@ impl DagBootstrapper {
             anchor_election,
             notifier,
             self.storage.clone(),
+            self.onchain_config.dag_ordering_causal_history_window as Round,
         );
 
         (dag, order_rule)
@@ -131,18 +140,20 @@ impl DagBootstrapper {
         order_rule: OrderRule,
         state_sync_trigger: StateSyncTrigger,
         ledger_info_provider: Arc<dyn TLedgerInfoProvider>,
+        rb_config: ReliableBroadcastConfig,
+        round_state_config: DagRoundStateConfig,
     ) -> (NetworkHandler, DagFetcherService) {
         let validators = self.epoch_state.verifier.get_ordered_account_addresses();
 
-        // A backoff policy that starts at 100ms and doubles each iteration.
-        let rb_backoff_policy = ExponentialBackoff::from_millis(2).factor(50);
+        // A backoff policy that starts at _base_*_factor_ ms and multiplies by _base_ each iteration.
+        let rb_backoff_policy = ExponentialBackoff::from_millis(rb_config.backoff_policy_base)
+            .factor(rb_config.backoff_policy_factor);
         let rb = Arc::new(ReliableBroadcast::new(
             validators.clone(),
             self.rb_network_sender.clone(),
             rb_backoff_policy,
             self.time_service.clone(),
-            // TODO: add to config
-            Duration::from_millis(500),
+            Duration::from_millis(rb_config.rpc_timeout_ms),
         ));
 
         let (dag_fetcher, fetch_requester, node_fetch_waiter, certified_node_fetch_waiter) =
@@ -151,15 +162,17 @@ impl DagBootstrapper {
                 self.dag_network_sender.clone(),
                 dag.clone(),
                 self.time_service.clone(),
+                self.config.fetcher_config.clone(),
             );
         let fetch_requester = Arc::new(fetch_requester);
-        let (new_round_tx, new_round_rx) = tokio::sync::mpsc::channel(1024);
+        let (new_round_tx, new_round_rx) =
+            tokio::sync::mpsc::channel(round_state_config.round_event_channel_size);
         let round_state = RoundState::new(
             new_round_tx.clone(),
             Box::new(AdaptiveResponsive::new(
                 new_round_tx,
                 self.epoch_state.clone(),
-                Duration::from_millis(300),
+                Duration::from_millis(round_state_config.adaptive_responsive_minimum_wait_time_ms),
             )),
         );
 
@@ -176,6 +189,8 @@ impl DagBootstrapper {
             fetch_requester.clone(),
             ledger_info_provider,
             round_state,
+            self.onchain_config.dag_ordering_causal_history_window as Round,
+            self.config.node_payload_config.clone(),
         );
         let rb_handler = NodeBroadcastHandler::new(
             dag.clone(),
@@ -183,6 +198,7 @@ impl DagBootstrapper {
             self.epoch_state.clone(),
             self.storage.clone(),
             fetch_requester,
+            self.config.node_payload_config.clone(),
         );
         let fetch_handler = FetchRequestHandler::new(dag, self.epoch_state.clone());
 
@@ -211,6 +227,7 @@ impl DagBootstrapper {
             self.time_service.clone(),
             self.state_computer.clone(),
             self.storage.clone(),
+            self.onchain_config.dag_ordering_causal_history_window as Round,
         );
 
         loop {
@@ -241,7 +258,7 @@ impl DagBootstrapper {
                     .ledger_info()
                     .clone(),
                 adapter.clone(),
-                DAG_WINDOW,
+                self.onchain_config.dag_ordering_causal_history_window,
             );
 
             let state_sync_trigger = StateSyncTrigger::new(
@@ -249,6 +266,7 @@ impl DagBootstrapper {
                 ledger_info_provider.clone(),
                 dag_store.clone(),
                 self.proof_notifier.clone(),
+                self.onchain_config.dag_ordering_causal_history_window as Round,
             );
 
             let (handler, fetch_service) = self.bootstrap_components(
@@ -256,6 +274,8 @@ impl DagBootstrapper {
                 order_rule,
                 state_sync_trigger,
                 ledger_info_provider.clone(),
+                self.config.rb_config.clone(),
+                self.config.round_state_config.clone(),
             );
 
             let df_handle = tokio::spawn(fetch_service.start());
@@ -283,7 +303,12 @@ impl DagBootstrapper {
                                 local_ordered_round = dag_store.read().highest_ordered_anchor_round(),
                                 local_committed_round = highest_committed_anchor_round
                             );
-                            let dag_fetcher = DagFetcher::new(self.epoch_state.clone(), self.dag_network_sender.clone(), self.time_service.clone());
+                            let dag_fetcher = DagFetcher::new(
+                                self.epoch_state.clone(),
+                                self.dag_network_sender.clone(),
+                                self.time_service.clone(),
+                                self.config.fetcher_config.clone()
+                            );
 
                             let sync_future = sync_manager.sync_dag_to(&certified_node_msg, dag_fetcher, dag_store.clone(), highest_committed_anchor_round);
 
@@ -338,6 +363,8 @@ pub(super) fn bootstrap_dag_for_test(
 ) {
     let bootstraper = DagBootstrapper::new(
         self_peer,
+        DagConsensusConfig::default(),
+        DagConsensusConfigV1::default(),
         signer.into(),
         epoch_state.clone(),
         storage.clone(),
@@ -367,14 +394,22 @@ pub(super) fn bootstrap_dag_for_test(
     ));
     let (dag_rpc_tx, dag_rpc_rx) = aptos_channel::new(QueueStyle::FIFO, 64, None);
 
-    let (dag_store, order_rule) =
-        bootstraper.bootstrap_dag_store(latest_ledger_info, adapter.clone(), DAG_WINDOW);
+    let (dag_store, order_rule) = bootstraper.bootstrap_dag_store(
+        latest_ledger_info,
+        adapter.clone(),
+        bootstraper
+            .onchain_config
+            .dag_ordering_causal_history_window,
+    );
 
     let state_sync_trigger = StateSyncTrigger::new(
         epoch_state,
         ledger_info_provider.clone(),
         dag_store.clone(),
         proof_notifier.clone(),
+        bootstraper
+            .onchain_config
+            .dag_ordering_causal_history_window as Round,
     );
 
     let (handler, fetch_service) = bootstraper.bootstrap_components(
@@ -382,6 +417,8 @@ pub(super) fn bootstrap_dag_for_test(
         order_rule,
         state_sync_trigger,
         ledger_info_provider,
+        bootstraper.config.rb_config.clone(),
+        bootstraper.config.round_state_config.clone(),
     );
 
     let dh_handle = tokio::spawn(async move {

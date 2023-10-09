@@ -4,7 +4,6 @@
 use crate::dag::{
     adapter::OrderedNotifier,
     anchor_election::AnchorElection,
-    dag_state_sync::DAG_WINDOW,
     dag_store::{Dag, NodeStatus},
     observability::{
         logging::{LogEvent, LogSchema},
@@ -27,6 +26,7 @@ pub struct OrderRule {
     anchor_election: Box<dyn AnchorElection>,
     notifier: Arc<dyn OrderedNotifier>,
     storage: Arc<dyn DAGStorage>,
+    dag_window_size_config: Round,
 }
 
 impl OrderRule {
@@ -37,6 +37,7 @@ impl OrderRule {
         mut anchor_election: Box<dyn AnchorElection>,
         notifier: Arc<dyn OrderedNotifier>,
         storage: Arc<dyn DAGStorage>,
+        dag_window_size_config: Round,
     ) -> Self {
         let committed_round = if latest_ledger_info.ends_epoch() {
             0
@@ -44,7 +45,7 @@ impl OrderRule {
             latest_ledger_info.round()
         };
         let commit_events = storage
-            .get_latest_k_committed_events(DAG_WINDOW as u64)
+            .get_latest_k_committed_events(dag_window_size_config)
             .expect("Failed to read commit events from storage");
         // make sure it's sorted
         assert!(commit_events
@@ -76,6 +77,7 @@ impl OrderRule {
             anchor_election,
             notifier,
             storage,
+            dag_window_size_config,
         };
         // re-check if anything can be ordered to recover pending anchors
         order_rule.process_all();
@@ -163,7 +165,7 @@ impl OrderRule {
             self.lowest_unordered_anchor_round,
             anchor.round(),
         ));
-        let lowest_round_to_reach = anchor.round().saturating_sub(DAG_WINDOW as u64);
+        let lowest_round_to_reach = anchor.round().saturating_sub(self.dag_window_size_config);
 
         // Ceil it to the closest unordered anchor round
         let lowest_anchor_round = std::cmp::max(

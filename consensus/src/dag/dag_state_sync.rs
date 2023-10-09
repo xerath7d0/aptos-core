@@ -20,11 +20,6 @@ use aptos_types::{
 use itertools::Itertools;
 use std::sync::Arc;
 
-// TODO: move this to onchain config
-// TODO: temporarily setting DAG_WINDOW to 1 to maintain Shoal safety
-pub const DAG_WINDOW: usize = 1;
-pub const STATE_SYNC_WINDOW_MULTIPLIER: usize = 30;
-
 #[derive(Debug)]
 pub enum StateSyncStatus {
     NeedsSync(CertifiedNodeMessage),
@@ -37,6 +32,7 @@ pub(super) struct StateSyncTrigger {
     ledger_info_provider: Arc<dyn TLedgerInfoProvider>,
     dag_store: Arc<RwLock<Dag>>,
     proof_notifier: Arc<dyn ProofNotifier>,
+    dag_window_size_config: Round,
 }
 
 impl StateSyncTrigger {
@@ -45,12 +41,14 @@ impl StateSyncTrigger {
         ledger_info_provider: Arc<dyn TLedgerInfoProvider>,
         dag_store: Arc<RwLock<Dag>>,
         proof_notifier: Arc<dyn ProofNotifier>,
+        dag_window_size_config: Round,
     ) -> Self {
         Self {
             epoch_state,
             ledger_info_provider,
             dag_store,
             proof_notifier,
+            dag_window_size_config,
         }
     }
 
@@ -139,7 +137,7 @@ impl StateSyncTrigger {
             || self
                 .ledger_info_provider
                 .get_highest_committed_anchor_round()
-                + ((STATE_SYNC_WINDOW_MULTIPLIER * DAG_WINDOW) as Round)
+                + self.dag_window_size_config
                 < li.commit_info().round()
     }
 }
@@ -149,6 +147,7 @@ pub(super) struct DagStateSynchronizer {
     time_service: TimeService,
     state_computer: Arc<dyn StateComputer>,
     storage: Arc<dyn DAGStorage>,
+    dag_window_size_config: Round,
 }
 
 impl DagStateSynchronizer {
@@ -157,12 +156,14 @@ impl DagStateSynchronizer {
         time_service: TimeService,
         state_computer: Arc<dyn StateComputer>,
         storage: Arc<dyn DAGStorage>,
+        dag_window_size_config: Round,
     ) -> Self {
         Self {
             epoch_state,
             time_service,
             state_computer,
             storage,
+            dag_window_size_config,
         }
     }
 
@@ -183,8 +184,7 @@ impl DagStateSynchronizer {
                     .highest_ordered_anchor_round()
                     .unwrap_or_default()
                     < commit_li.commit_info().round()
-                    || highest_committed_anchor_round
-                        + ((STATE_SYNC_WINDOW_MULTIPLIER * DAG_WINDOW) as Round)
+                    || highest_committed_anchor_round + self.dag_window_size_config
                         < commit_li.commit_info().round()
             );
         }
@@ -197,7 +197,7 @@ impl DagStateSynchronizer {
         let start_round = commit_li
             .commit_info()
             .round()
-            .saturating_sub(DAG_WINDOW as Round);
+            .saturating_sub(self.dag_window_size_config);
         let sync_dag_store = Arc::new(RwLock::new(Dag::new_empty(
             self.epoch_state.clone(),
             self.storage.clone(),
