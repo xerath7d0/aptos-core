@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
+    deserializer::DeserializerConfig,
     file_format::{CompiledModule, CompiledScript},
     file_format_common::*,
 };
@@ -229,8 +230,11 @@ fn max_version_lower_than_hardcoded() {
     binary.push(10); // table count
     binary.push(0); // rest of binary
 
-    let res =
-        CompiledScript::deserialize_with_max_version(&binary, VERSION_MAX.checked_sub(1).unwrap());
+    let config = DeserializerConfig::new(
+        VERSION_MAX.checked_sub(1).unwrap(),
+        LEGACY_IDENTIFIER_SIZE_MAX as u32,
+    );
+    let res = CompiledScript::deserialize_with_config(&binary, &config);
     assert_eq!(
         res.expect_err("Expected unknown version").major_status(),
         StatusCode::UNKNOWN_VERSION

@@ -86,6 +86,7 @@ pub enum FeatureFlag {
     Secp256k1ECDSAAuthenticator,
     SponsoredAutomaticAccountCreation,
     FeePayerAccountOptional,
+    LimitMaxIdentifierLength,
 }
 
 fn generate_features_blob(writer: &CodeWriter, data: &[u64]) {
@@ -226,6 +227,7 @@ impl From<FeatureFlag> for AptosFeatureFlag {
                 AptosFeatureFlag::SPONSORED_AUTOMATIC_ACCOUNT_CREATION
             },
             FeatureFlag::FeePayerAccountOptional => AptosFeatureFlag::FEE_PAYER_ACCOUNT_OPTIONAL,
+            FeatureFlag::LimitMaxIdentifierLength => AptosFeatureFlag::LIMIT_MAX_IDENTIFIER_LENGTH,
         }
     }
 }
@@ -289,6 +291,7 @@ impl From<AptosFeatureFlag> for FeatureFlag {
                 FeatureFlag::SponsoredAutomaticAccountCreation
             },
             AptosFeatureFlag::FEE_PAYER_ACCOUNT_OPTIONAL => FeatureFlag::FeePayerAccountOptional,
+            AptosFeatureFlag::LIMIT_MAX_IDENTIFIER_LENGTH => FeatureFlag::LimitMaxIdentifierLength,
         }
     }
 }

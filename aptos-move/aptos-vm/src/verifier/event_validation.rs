@@ -5,6 +5,7 @@ use crate::move_vm_ext::SessionExt;
 use aptos_framework::RuntimeModuleMetadataV1;
 use move_binary_format::{
     access::{ModuleAccess, ScriptAccess},
+    deserializer::DeserializerConfig,
     errors::{Location, PartialVMError, VMError, VMResult},
     file_format::{
         Bytecode, CompiledScript,
@@ -149,12 +150,9 @@ pub(crate) fn extract_event_metadata(
 
 pub(crate) fn verify_no_event_emission_in_script(
     script_code: &[u8],
-    max_binary_format_version: u32,
+    config: &DeserializerConfig,
 ) -> VMResult<()> {
-    let script = match CompiledScript::deserialize_with_max_version(
-        script_code,
-        max_binary_format_version,
-    ) {
+    let script = match CompiledScript::deserialize_with_config(script_code, config) {
         Ok(script) => script,
         Err(err) => {
             let msg = format!("[VM] deserializer for script returned error: {:?}", err);

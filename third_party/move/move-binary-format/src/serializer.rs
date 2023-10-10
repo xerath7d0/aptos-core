@@ -149,7 +149,7 @@ fn serialize_bytecode_count(binary: &mut BinaryData, len: usize) -> Result<()> {
 }
 
 fn serialize_identifier_size(binary: &mut BinaryData, len: usize) -> Result<()> {
-    write_as_uleb128(binary, len as u64, IDENTIFIER_SIZE_MAX)
+    write_as_uleb128(binary, len as u64, LEGACY_IDENTIFIER_SIZE_MAX)
 }
 
 fn serialize_constant_size(binary: &mut BinaryData, len: usize) -> Result<()> {
