@@ -18,9 +18,11 @@ use crate::{
     view::{LatestView, ParallelState, SequentialState, ViewState},
 };
 use aptos_aggregator::{
-    delayed_change::{ApplyBase, DelayedChange},
+    delayed_change::{
+        ApplyBase, DelayedApplyChange, DelayedApplyEntry, DelayedChange, DelayedEntry,
+    },
     delta_change_set::serialize,
-    types::{expect_ok, PanicOr},
+    types::{code_invariant_error, expect_ok, PanicOr},
 };
 use aptos_logger::{debug, info};
 use aptos_mvhashmap::{
@@ -31,6 +33,7 @@ use aptos_mvhashmap::{
 };
 use aptos_state_view::TStateView;
 use aptos_types::{
+    aggregator::PanicError,
     contract_event::ReadWriteEvent,
     executable::Executable,
     fee_statement::FeeStatement,
@@ -94,8 +97,8 @@ where
         }
     }
 
-    fn fallback_to_sequential() {
-        unimplemented!();
+    fn fallback_to_sequential<M: std::fmt::Debug>(message: M) {
+        panic!("{:?}", message);
     }
 
     fn execute(
@@ -124,6 +127,7 @@ where
             .map_or(HashSet::new(), |keys| keys.collect());
 
         let mut speculative_inconsistent = false;
+        let mut read_set = sync_view.take_reads();
 
         // For tracking whether the recent execution wrote outside of the previous write/delta set.
         let mut updates_outside = false;
@@ -158,14 +162,44 @@ where
                 versioned_cache.data().add_delta(k, idx_to_execute, d);
             }
 
-            for (id, change) in output.delayed_field_change_set().into_iter() {
+            let delayed_field_change_set = output.delayed_field_change_set();
+
+            // TODO : see if/how we want to incorporate DeltaHistory from read set into versoined_delayed_fields
+            // for id in read_set.get_delayed_field_keys() {
+            //     if !delayed_field_change_set.contains_key(id) {
+            //         let read_value = read_set.get_delayed_field_by_kind(id, DelayedFieldReadKind::Bounded).unwrap();
+
+            for (id, change) in delayed_field_change_set.into_iter() {
                 prev_modified_delayed_fields.remove(&id);
+
+                let entry = match change {
+                    DelayedChange::Create(value) => DelayedEntry::Create(value),
+                    DelayedChange::Apply(DelayedApplyChange::AggregatorDelta { delta }) => {
+                        DelayedEntry::Apply(DelayedApplyEntry::AggregatorDelta {
+                            delta: delta.into_op_no_additional_history(),
+                        })
+                    },
+                    DelayedChange::Apply(DelayedApplyChange::SnapshotDelta {
+                        delta,
+                        base_aggregator,
+                    }) => DelayedEntry::Apply(DelayedApplyEntry::SnapshotDelta {
+                        delta: delta.into_op_no_additional_history(),
+                        base_aggregator,
+                    }),
+                    DelayedChange::Apply(DelayedApplyChange::SnapshotDerived {
+                        base_snapshot,
+                        formula,
+                    }) => DelayedEntry::Apply(DelayedApplyEntry::SnapshotDerived {
+                        base_snapshot,
+                        formula,
+                    }),
+                };
 
                 // TODO: figure out if change should update updates_outside
                 if let Err(e) =
                     versioned_cache
                         .delayed_fields()
-                        .record_change(id, idx_to_execute, change)
+                        .record_change(id, idx_to_execute, entry)
                 {
                     match e {
                         PanicOr::CodeInvariantError(m) => panic!("{}", m),
@@ -199,7 +233,7 @@ where
                 ExecutionStatus::SpeculativeExecutionAbortError(msg)
             },
             ExecutionStatus::DelayedFieldsCodeInvariantError(msg) => {
-                Self::fallback_to_sequential();
+                Self::fallback_to_sequential(msg.clone());
                 ExecutionStatus::DelayedFieldsCodeInvariantError(msg)
             },
         };
@@ -217,7 +251,6 @@ where
             versioned_cache.delayed_fields().remove(&id, idx_to_execute);
         }
 
-        let mut read_set = sync_view.take_reads();
         if speculative_inconsistent {
             read_set.capture_delayed_field_read_error(&PanicOr::Or(
                 MVDelayedFieldsError::DeltaApplicationFailure,
@@ -242,7 +275,7 @@ where
             .expect("[BlockSTM]: Prior read-set must be recorded");
 
         if read_set.validate_incorrect_use() {
-            Self::fallback_to_sequential();
+            Self::fallback_to_sequential("read_set incorrect_use");
         }
 
         // Note: we validate delayed field reads only at try_commit.
@@ -314,20 +347,20 @@ where
         txn_idx: TxnIndex,
         versioned_cache: &MVHashMap<T::Key, T::Tag, T::Value, X, T::Identifier>,
         last_input_output: &TxnLastInputOutput<T, E::Output, E::Error>,
-    ) -> bool {
+    ) -> ::std::result::Result<bool, PanicError> {
         let read_set = last_input_output
             .read_set(txn_idx)
             .expect("Read set must be recorded");
+
         let mut execution_still_valid =
-            read_set.validate_delayed_field_reads(versioned_cache.delayed_fields(), txn_idx);
+            read_set.validate_delayed_field_reads(versioned_cache.delayed_fields(), txn_idx)?;
 
         match last_input_output.output_category(txn_idx) {
             Some(ErrorCategory::SpeculativeExecutionError) => {
                 assert!(!execution_still_valid);
             },
             Some(ErrorCategory::CodeInvariantError) => {
-                // TODO: fallback to sequential execution
-                panic!();
+                return Err(code_invariant_error(""));
             },
             _ => (),
         };
@@ -342,15 +375,14 @@ where
                         CommitError::ReExecutionNeeded(_) => {
                             execution_still_valid = false;
                         },
-                        CommitError::CodeInvariantError(_) => {
-                            // TODO: fallback to sequential execution
-                            panic!();
+                        CommitError::CodeInvariantError(msg) => {
+                            return Err(code_invariant_error(msg));
                         },
                     }
                 }
             }
         }
-        execution_still_valid
+        Ok(execution_still_valid)
     }
 
     fn prepare_and_queue_commit_ready_txns(
@@ -371,7 +403,13 @@ where
         block: &[T],
     ) {
         while let Some((txn_idx, incarnation)) = scheduler.try_commit() {
-            if !Self::validate_commit_ready(txn_idx, versioned_cache, last_input_output) {
+            let validation_result =
+                Self::validate_commit_ready(txn_idx, versioned_cache, last_input_output);
+            if validation_result.is_err() {
+                Self::fallback_to_sequential(validation_result.unwrap());
+                return;
+            }
+            if !validation_result.unwrap() {
                 // Transaction needs to be re-executed, one final time.
 
                 Self::update_transaction_on_abort(txn_idx, last_input_output, versioned_cache);
@@ -402,11 +440,13 @@ where
                     // SchedulerTask::NoTask
                 }
 
-                if !Self::validate(txn_idx, last_input_output, versioned_cache)
-                    || Self::validate_commit_ready(txn_idx, versioned_cache, last_input_output)
+                let validation_result = Self::validate(txn_idx, last_input_output, versioned_cache);
+                if !validation_result
+                    || !Self::validate_commit_ready(txn_idx, versioned_cache, last_input_output)
+                        .unwrap_or(false)
                 {
-                    // TODO should never happen, fallback to sequential
-                    panic!("Validation after commit-ready re-execution still failed");
+                    println!("Validation after re-execution failed for {} txn, validate() = {}", txn_idx, validation_result);
+                    Self::fallback_to_sequential("validation after re-execution failed");
                 }
             }
 
