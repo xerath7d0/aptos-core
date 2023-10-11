@@ -281,13 +281,21 @@ impl VMChangeSet {
         &self.module_write_set
     }
 
-    // Called by `try_into_transaction_output_with_materialized_writes` only.
+    // Called by `into_transaction_output_with_materialized_writes` only.
     pub(crate) fn extend_aggregator_write_set(
         &mut self,
         additional_aggregator_writes: impl Iterator<Item = (StateKey, WriteOp)>,
     ) {
         self.aggregator_write_set
             .extend(additional_aggregator_writes)
+    }
+
+    // Called by `into_transaction_output_with_materialized_writes` only.
+    pub(crate) fn extend_resource_write_set(
+        &mut self,
+        group_writes: impl Iterator<Item = (StateKey, WriteOp)>,
+    ) {
+        self.resource_write_set.extend(group_writes)
     }
 
     pub fn aggregator_v1_write_set(&self) -> &HashMap<StateKey, WriteOp> {
