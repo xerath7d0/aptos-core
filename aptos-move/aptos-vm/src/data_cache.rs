@@ -160,8 +160,20 @@ impl<'e, E: ExecutorView> StorageAdapter<'e, E> {
         struct_tag: &StructTag,
         metadata: &[Metadata],
     ) -> Result<(Option<Bytes>, usize), VMError> {
+        self.get_any_resource_with_layout(address, struct_tag, metadata, None)
+    }
+
+    fn get_any_resource_with_layout(
+        &self,
+        address: &AccountAddress,
+        struct_tag: &StructTag,
+        metadata: &[Metadata],
+        maybe_layout: Option<&MoveTypeLayout>,
+    ) -> Result<(Option<Bytes>, usize), VMError> {
         let resource_group = get_resource_group_from_metadata(struct_tag, metadata);
         if let Some(resource_group) = resource_group {
+            // TODO pass the layout to resource groups
+
             let key = StateKey::access_path(AccessPath::resource_group_access_path(
                 *address,
                 resource_group.clone(),
@@ -191,7 +203,7 @@ impl<'e, E: ExecutorView> StorageAdapter<'e, E> {
 
             let buf = self
                 .executor_view
-                .get_resource_bytes(&StateKey::access_path(access_path), None)
+                .get_resource_bytes(&StateKey::access_path(access_path), maybe_layout)
                 .map_err(|_| {
                     PartialVMError::new(StatusCode::STORAGE_ERROR).finish(Location::Undefined)
                 })?;
@@ -257,15 +269,14 @@ impl<'e, E: ExecutorView> AptosMoveResolver for StorageAdapter<'e, E> {
 }
 
 impl<'e, E: ExecutorView> ResourceResolver for StorageAdapter<'e, E> {
-    fn get_resource_value_with_metadata(
+    fn get_resource_bytes_with_metadata_and_layout(
         &self,
         address: &AccountAddress,
         struct_tag: &StructTag,
         metadata: &[Metadata],
-        _layout: &MoveTypeLayout,
+        layout: &MoveTypeLayout,
     ) -> anyhow::Result<(Option<Bytes>, usize)> {
-        // TODO(aggregator): use layout for aggregator liftings.
-        self.get_resource_bytes_with_metadata(address, struct_tag, metadata)
+        Ok(self.get_any_resource_with_layout(address, struct_tag, metadata, Some(layout))?)
     }
 
     fn get_resource_bytes_with_metadata(
@@ -306,14 +317,16 @@ impl<'e, E: ExecutorView> ModuleResolver for StorageAdapter<'e, E> {
 }
 
 impl<'e, E: ExecutorView> TableResolver for StorageAdapter<'e, E> {
-    fn resolve_table_entry_value(
+    fn resolve_table_entry_bytes_with_layout(
         &self,
         handle: &TableHandle,
         key: &[u8],
-        _layout: &MoveTypeLayout,
+        layout: &MoveTypeLayout,
     ) -> Result<Option<Bytes>, Error> {
-        // TODO(aggregator): use layout for aggregator liftings.
-        self.resolve_table_entry_bytes(handle, key)
+        self.executor_view.get_resource_bytes(
+            &StateKey::table_item((*handle).into(), key.to_vec()),
+            Some(layout),
+        )
     }
 
     fn resolve_table_entry_bytes(
