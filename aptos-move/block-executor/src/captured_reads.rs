@@ -3,8 +3,7 @@
 
 use anyhow::bail;
 use aptos_aggregator::{
-    bounded_math::SignedU128,
-    delta_change_set::DeltaOp,
+    delta_math::DeltaHistory,
     types::{
         code_invariant_error, DelayedFieldValue, DelayedFieldsSpeculativeError, PanicOr,
         ReadPosition,
@@ -172,22 +171,18 @@ pub enum DelayedFieldReadKind {
 pub enum DelayedFieldRead {
     // Represents a full read - that value has been returned to the caller,
     // meaning that read is valid only if value is identical.
-    // Running inner_delta is kept only for internal bookeeping, but is not
-    // checked for read validation.
     Value {
         value: DelayedFieldValue,
-        // stored only for asserts, unnecessary.
-        inner_delta: SignedU128,
     },
-    // Represents a restricted read - where a range of values that satisfy DeltaOp History
+    // Represents a restricted read - where a range of values that satisfy DeltaHistory
     // are all valid and produce the same outcome.
     // Only boolean outcomes of "try_add_delta" operations have been returned to the caller,
     // and so we need to respect that those return the same outcome when doing the validation.
     // Running inner_value is kept only for internal bookeeping - and is used to as a value against
     // which results are computed, but is not checked for read validation.
     HistoryBounded {
-        // delta/max_value here is only for asserts, otherwise unnecessary
-        delta_restriction: DeltaOp,
+        restriction: DeltaHistory,
+        max_value: u128,
         inner_value: DelayedFieldValue,
     },
 }
@@ -229,16 +224,18 @@ impl DelayedFieldRead {
             },
             (
                 HistoryBounded {
-                    delta_restriction: d1,
+                    restriction: h1,
                     inner_value: v1,
+                    max_value: m1,
                 },
                 HistoryBounded {
-                    delta_restriction: d2,
+                    restriction: h2,
                     inner_value: v2,
+                    max_value: m2,
                 },
             ) => {
                 // TODO see if we want to perform checks on max value/delta
-                if v1 == v2 && d1.stricter_than(d2) {
+                if v1 == v2 && m1 == m2 && h1.stricter_than(h2) {
                     DataReadComparison::Contains
                 } else {
                     DataReadComparison::Inconsistent
@@ -246,14 +243,15 @@ impl DelayedFieldRead {
             },
             (HistoryBounded { .. }, Value { .. }) => DataReadComparison::Insufficient,
             (
-                Value { value: v1, .. },
+                Value { value: v1 },
                 HistoryBounded {
-                    delta_restriction: d2,
+                    restriction: h2,
+                    max_value: m2,
                     ..
                 },
             ) => {
                 if let Ok(v1) = v1.clone().into_aggregator_value() {
-                    if d2.apply_to(v1).is_ok() {
+                    if h2.validate_against_base_value(v1, *m2).is_ok() {
                         DataReadComparison::Contains
                     } else {
                         DataReadComparison::Inconsistent
@@ -585,13 +583,15 @@ impl<T: Transaction> CapturedReads<T> {
                         }
                     },
                     DelayedFieldRead::HistoryBounded {
-                        delta_restriction, ..
-                    } => match delta_restriction.apply_to(current_value.into_aggregator_value()?) {
+                        restriction,
+                        max_value,
+                        ..
+                    } => match restriction.validate_against_base_value(
+                        current_value.into_aggregator_value()?,
+                        *max_value,
+                    ) {
                         Ok(_) => {},
-                        Err(PanicOr::CodeInvariantError(msg)) => {
-                            return Err(PanicError::CodeInvariantError(msg));
-                        },
-                        Err(PanicOr::Or(_)) => {
+                        Err(_) => {
                             return Ok(false);
                         },
                     },

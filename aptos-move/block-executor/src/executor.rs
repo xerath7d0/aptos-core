@@ -405,8 +405,8 @@ where
         while let Some((txn_idx, incarnation)) = scheduler.try_commit() {
             let validation_result =
                 Self::validate_commit_ready(txn_idx, versioned_cache, last_input_output);
-            if validation_result.is_err() {
-                Self::fallback_to_sequential(validation_result.unwrap());
+            if let Err(err) = validation_result {
+                Self::fallback_to_sequential(err);
                 return;
             }
             if !validation_result.unwrap() {
@@ -445,7 +445,10 @@ where
                     || !Self::validate_commit_ready(txn_idx, versioned_cache, last_input_output)
                         .unwrap_or(false)
                 {
-                    println!("Validation after re-execution failed for {} txn, validate() = {}", txn_idx, validation_result);
+                    println!(
+                        "Validation after re-execution failed for {} txn, validate() = {}",
+                        txn_idx, validation_result
+                    );
                     Self::fallback_to_sequential("validation after re-execution failed");
                 }
             }

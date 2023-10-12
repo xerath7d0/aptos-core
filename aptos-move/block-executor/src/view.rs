@@ -8,7 +8,7 @@ use crate::{
 };
 use aptos_aggregator::{
     bounded_math::{ok_overflow, BoundedMath, SignedU128},
-    delta_change_set::{serialize, DeltaOp},
+    delta_change_set::serialize,
     delta_math::DeltaHistory,
     resolver::TDelayedFieldView,
     types::{
@@ -131,7 +131,6 @@ fn get_delayed_field_value_impl<T: Transaction>(
                     false,
                     DelayedFieldRead::Value {
                         value: value.clone(),
-                        inner_delta: SignedU128::Positive(0),
                     },
                 )?;
                 return Ok(value);
@@ -173,59 +172,41 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
         .borrow()
         .get_delayed_field_by_kind(id, DelayedFieldReadKind::HistoryBounded);
     match delayed_read {
-        Some(DelayedFieldRead::Value { value, inner_delta }) => {
-            if base_delta != &inner_delta {
-                return Err(code_invariant_error(
-                    "Delta in CapturedReads different from passed-in delta",
-                )
-                .into());
-            }
+        Some(DelayedFieldRead::Value { value }) => {
             let before = expect_ok(
                 math.unsigned_add_delta(value.clone().into_aggregator_value()?, base_delta),
             )?;
             if math.unsigned_add_delta(before, delta).is_err() {
                 Ok(false)
             } else {
-                let new_delta = expect_ok(math.signed_add(&inner_delta, delta))?;
                 captured_reads.borrow_mut().capture_delayed_field_read(
                     *id,
                     true,
-                    DelayedFieldRead::Value {
-                        value,
-                        inner_delta: new_delta,
-                    },
+                    DelayedFieldRead::Value { value },
                 )?;
                 Ok(true)
             }
         },
         Some(DelayedFieldRead::HistoryBounded {
-            delta_restriction,
+            restriction: mut history,
+            max_value: before_max_value,
             inner_value,
         }) => {
-            let (before_delta, mut history, before_max_value) = delta_restriction.into_inner();
             if before_max_value != max_value {
                 return Err(
                     code_invariant_error("Cannot merge deltas with different limits").into(),
                 );
             }
-            if &before_delta != base_delta {
-                return Err(code_invariant_error(
-                    "Delta in CapturedReads different from passed-in delta",
-                )
-                .into());
-            }
 
-            let before_value =
-                expect_ok(math.unsigned_add_delta(
-                    inner_value.clone().into_aggregator_value()?,
-                    &before_delta,
-                ))?;
+            let before_value = expect_ok(
+                math.unsigned_add_delta(inner_value.clone().into_aggregator_value()?, base_delta),
+            )?;
 
             if math.unsigned_add_delta(before_value, delta).is_err() {
                 match delta {
                     SignedU128::Positive(delta_value) => {
                         let overflow_delta = expect_ok(ok_overflow(
-                            math.unsigned_add_delta(*delta_value, &before_delta),
+                            math.unsigned_add_delta(*delta_value, base_delta),
                         ))?;
 
                         // if value overflowed, we don't need to record it
@@ -235,7 +216,7 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                     },
                     SignedU128::Negative(delta_value) => {
                         let underflow_delta = expect_ok(ok_overflow(
-                            math.unsigned_add_delta(*delta_value, &before_delta.minus()),
+                            math.unsigned_add_delta(*delta_value, &base_delta.minus()),
                         ))?;
                         // If value overflowed (delta was smaller than -max_value), we don't need to record it.
                         if let Some(underflow_delta) = underflow_delta {
@@ -247,19 +228,21 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                     *id,
                     true,
                     DelayedFieldRead::HistoryBounded {
-                        delta_restriction: DeltaOp::new(before_delta, before_max_value, history),
+                        restriction: history,
+                        max_value: before_max_value,
                         inner_value,
                     },
                 )?;
                 Ok(false)
             } else {
-                let new_delta = expect_ok(math.signed_add(&before_delta, delta))?;
+                let new_delta = expect_ok(math.signed_add(base_delta, delta))?;
                 history.record_success(new_delta);
                 captured_reads.borrow_mut().capture_delayed_field_read(
                     *id,
                     true,
                     DelayedFieldRead::HistoryBounded {
-                        delta_restriction: DeltaOp::new(new_delta, before_max_value, history),
+                        restriction: history,
+                        max_value: before_max_value,
                         inner_value,
                     },
                 )?;
@@ -312,11 +295,8 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                     *id,
                     false,
                     DelayedFieldRead::HistoryBounded {
-                        delta_restriction: DeltaOp::new(
-                            SignedU128::Positive(0),
-                            max_value,
-                            history,
-                        ),
+                        restriction: history,
+                        max_value,
                         inner_value: last_committed_value,
                     },
                 )?;
@@ -327,7 +307,8 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                     *id,
                     false,
                     DelayedFieldRead::HistoryBounded {
-                        delta_restriction: DeltaOp::new(*delta, max_value, history),
+                        restriction: history,
+                        max_value,
                         inner_value: last_committed_value,
                     },
                 )?;
@@ -979,7 +960,6 @@ mod test {
     };
     use aptos_aggregator::{
         bounded_math::{BoundedMath, SignedU128},
-        delta_change_set::DeltaOp,
         delta_math::DeltaHistory,
         types::{DelayedFieldValue, DelayedFieldsSpeculativeError, PanicOr, ReadPosition},
     };
@@ -1063,6 +1043,7 @@ mod test {
         view.set_value(id, storage_value.clone());
 
         let mut base_delta = SignedU128::Positive(0);
+        let base_value_ref = &mut base_delta;
 
         macro_rules! assert_try_add {
             ($delta:expr, $outcome:expr) => {
@@ -1072,14 +1053,16 @@ mod test {
                         &view,
                         &wait_for,
                         &id,
-                        &base_delta,
+                        base_value_ref,
                         &$delta,
                         max_value,
                         txn_idx
                     ),
                     $outcome
                 );
-                base_delta = math.signed_add(&base_delta, &$delta).unwrap();
+                if $outcome {
+                    *base_value_ref = math.signed_add(base_value_ref, &$delta).unwrap();
+                }
             };
         }
 
@@ -1089,12 +1072,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1105,12 +1089,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 0,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1121,12 +1106,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1137,12 +1123,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1153,12 +1140,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 500,
                     min_achieved_negative_delta: 50,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1169,12 +1157,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 500,
                     min_achieved_negative_delta: 100,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1193,6 +1182,7 @@ mod test {
         view.set_value(id, storage_value.clone());
 
         let mut base_delta = SignedU128::Positive(0);
+        let base_value_ref = &mut base_delta;
 
         macro_rules! assert_try_add {
             ($delta:expr, $outcome:expr) => {
@@ -1202,7 +1192,7 @@ mod test {
                         &view,
                         &wait_for,
                         &id,
-                        &base_delta,
+                        base_value_ref,
                         &$delta,
                         max_value,
                         txn_idx
@@ -1210,7 +1200,7 @@ mod test {
                     $outcome
                 );
                 if $outcome {
-                    base_delta = math.signed_add(&base_delta, &$delta).unwrap();
+                    *base_value_ref = math.signed_add(base_value_ref, &$delta).unwrap();
                 }
             };
         }
@@ -1221,12 +1211,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 0,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1237,12 +1228,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1253,12 +1245,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1269,12 +1262,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
                     min_overflow_positive_delta: Some(525),
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1285,12 +1279,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
                     min_overflow_positive_delta: Some(501),
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1301,12 +1296,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
                     min_overflow_positive_delta: Some(501),
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1325,6 +1321,7 @@ mod test {
         view.set_value(id, storage_value.clone());
 
         let mut base_delta = SignedU128::Positive(0);
+        let base_value_ref = &mut base_delta;
 
         macro_rules! assert_try_add {
             ($delta:expr, $outcome:expr) => {
@@ -1334,7 +1331,7 @@ mod test {
                         &view,
                         &wait_for,
                         &id,
-                        &base_delta,
+                        base_value_ref,
                         &$delta,
                         max_value,
                         txn_idx
@@ -1342,7 +1339,7 @@ mod test {
                     $outcome
                 );
                 if $outcome {
-                    base_delta = math.signed_add(&base_delta, &$delta).unwrap();
+                    *base_value_ref = math.signed_add(base_value_ref, &$delta).unwrap();
                 }
             };
         }
@@ -1353,12 +1350,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1369,12 +1367,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1385,12 +1384,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: Some(250),
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1401,12 +1401,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: Some(225),
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1417,12 +1418,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: Some(225),
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1433,12 +1435,13 @@ mod test {
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: Some(201),
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );
@@ -1451,46 +1454,36 @@ mod test {
         let wait_for = FakeWaitForDependency();
         let id = DelayedFieldID::new(600);
         let max_value = 600;
-        let math = BoundedMath::new(max_value);
         let txn_idx = 1;
         let storage_value = DelayedFieldValue::Aggregator(200);
         view.set_value(id, storage_value.clone());
 
-        let mut base_delta = SignedU128::Positive(0);
+        assert_ok_eq!(
+            delayed_field_try_add_delta_outcome_impl(
+                &captured_reads,
+                &view,
+                &wait_for,
+                &id,
+                &SignedU128::Positive(0),
+                &SignedU128::Positive(300),
+                max_value,
+                txn_idx
+            ),
+            true
+        );
 
-        macro_rules! assert_try_add {
-            ($delta:expr, $outcome:expr) => {
-                assert_ok_eq!(
-                    delayed_field_try_add_delta_outcome_impl(
-                        &captured_reads,
-                        &view,
-                        &wait_for,
-                        &id,
-                        &base_delta,
-                        &$delta,
-                        max_value,
-                        txn_idx
-                    ),
-                    $outcome
-                );
-                if $outcome {
-                    base_delta = math.signed_add(&base_delta, &$delta).unwrap();
-                }
-            };
-        }
-
-        assert_try_add!(SignedU128::Positive(300), true);
         assert_some_eq!(
             captured_reads
                 .borrow()
                 .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
             DelayedFieldRead::HistoryBounded {
-                delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
+                restriction: DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
                     min_overflow_positive_delta: None,
                     max_underflow_negative_delta: None,
-                }),
+                },
+                max_value,
                 inner_value: storage_value.clone(),
             }
         );

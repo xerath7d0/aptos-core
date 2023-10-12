@@ -158,10 +158,6 @@ impl DeltaOp {
         Ok(())
     }
 
-    pub fn stricter_than(&self, other: &DeltaOp) -> bool {
-        self.history.stricter_than(&other.history)
-    }
-
     pub fn into_inner(self) -> (SignedU128, DeltaHistory, u128) {
         (self.update, self.history, self.max_value)
     }
