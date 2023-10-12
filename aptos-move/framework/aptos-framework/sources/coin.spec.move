@@ -40,7 +40,6 @@ spec aptos_framework::coin {
     }
 
     spec mint {
-        pragma aborts_if_is_strict;
         let addr = type_info::type_of<CoinType>().account_address;
         modifies global<CoinInfo<CoinType>>(addr);
         aborts_if (amount != 0) && !exists<CoinInfo<CoinType>>(addr);
