@@ -72,9 +72,10 @@ spec aptos_framework::managed_coin {
         use aptos_std::type_info;
         let account_addr = signer::address_of(account);
         aborts_if !exists<Capabilities<CoinType>>(account_addr);
+        let addr = type_info::type_of<CoinType>().account_address;
         aborts_if (amount != 0) && !exists<coin::CoinInfo<CoinType>>(addr);
-        aborts_if !exists<coin::CoinStore<CoinType>>(dst_addr);
         let coin_store = global<coin::CoinStore<CoinType>>(dst_addr);
+        aborts_if !exists<coin::CoinStore<CoinType>>(dst_addr);
         aborts_if coin_store.frozen;
         include coin::AbortsIfAggregatorAdd<CoinType>;
         ensures coin::supply<CoinType> == old(coin::supply<CoinType>) + amount;
