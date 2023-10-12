@@ -3,7 +3,17 @@
 
 # Module `0x1::aggregator_v2`
 
-This module provides an interface for aggregators (version 2).
+This module provides an interface for aggregators (version 2). Aggregators are
+similar to unsigned integers and support addition and subtraction (aborting on
+underflow or on overflowing a custom upper limit). The difference from integers
+is that aggregators allow to perform both additions and subtractions in parallel
+across multiple transactions, enabling parallel execution. For example, if the
+first transaction is doing <code><a href="aggregator_v2.md#0x1_aggregator_v2_try_add">try_add</a>(X, 1)</code> for aggregator <code>X</code>, and the second is
+doing <code><a href="aggregator_v2.md#0x1_aggregator_v2_try_sub">try_sub</a>(X,3)</code>, they can be executed in parallel avoiding a read-modify-write
+dependency.
+However, reading the aggregator value (i.e. calling <code><a href="aggregator_v2.md#0x1_aggregator_v2_read">read</a>(X)</code>) is an expensive
+operation and should be avoided as much as possible because it reduces the
+parallelism.
 
 
 -  [Struct `Aggregator`](#0x1_aggregator_v2_Aggregator)
@@ -71,6 +81,9 @@ Currently supported types for Element are u64 and u128.
 
 ## Struct `AggregatorSnapshot`
 
+Represents a constant value, that was derived from an aggregator at given instant in time.
+Unlike read() and storing the value directly, this enables parallel execution of transactions,
+while storing snapshot of aggregator state elsewhere.
 
 
 <pre><code><b>struct</b> <a href="aggregator_v2.md#0x1_aggregator_v2_AggregatorSnapshot">AggregatorSnapshot</a>&lt;Element&gt; <b>has</b> drop, store
@@ -115,6 +128,17 @@ The value of aggregator underflows (goes below zero). Raised by uncoditional sub
 
 
 <pre><code><b>const</b> <a href="aggregator_v2.md#0x1_aggregator_v2_EAGGREGATOR_UNDERFLOW">EAGGREGATOR_UNDERFLOW</a>: u64 = 2;
+</code></pre>
+
+
+
+<a name="0x1_aggregator_v2_EAGGREGATOR_FUNCTION_NOT_YET_SUPPORTED"></a>
+
+The native aggregator function, that is in the move file, is not yet supported.
+and any calls will raise this error.
+
+
+<pre><code><b>const</b> <a href="aggregator_v2.md#0x1_aggregator_v2_EAGGREGATOR_FUNCTION_NOT_YET_SUPPORTED">EAGGREGATOR_FUNCTION_NOT_YET_SUPPORTED</a>: u64 = 9;
 </code></pre>
 
 
@@ -328,6 +352,7 @@ If subtraction would result in a negative value, <code><b>false</b></code> is re
 ## Function `read`
 
 Returns a value stored in this aggregator.
+Note: This operation prevents parallelism of the transaction that calls it.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="aggregator_v2.md#0x1_aggregator_v2_read">read</a>&lt;IntElement&gt;(<a href="aggregator.md#0x1_aggregator">aggregator</a>: &<a href="aggregator_v2.md#0x1_aggregator_v2_Aggregator">aggregator_v2::Aggregator</a>&lt;IntElement&gt;): IntElement
@@ -350,6 +375,8 @@ Returns a value stored in this aggregator.
 
 ## Function `snapshot`
 
+Returns a wrapper of a current value of an aggregator
+Unlike read(), this enables parallel execution of transactions.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="aggregator_v2.md#0x1_aggregator_v2_snapshot">snapshot</a>&lt;IntElement&gt;(<a href="aggregator.md#0x1_aggregator">aggregator</a>: &<a href="aggregator_v2.md#0x1_aggregator_v2_Aggregator">aggregator_v2::Aggregator</a>&lt;IntElement&gt;): <a href="aggregator_v2.md#0x1_aggregator_v2_AggregatorSnapshot">aggregator_v2::AggregatorSnapshot</a>&lt;IntElement&gt;
@@ -372,6 +399,8 @@ Returns a value stored in this aggregator.
 
 ## Function `create_snapshot`
 
+Creates a snapshot of a given value.
+Useful for when object is sometimes created via snapshot() or string_concat(), and sometimes directly.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="aggregator_v2.md#0x1_aggregator_v2_create_snapshot">create_snapshot</a>&lt;Element: <b>copy</b>, drop&gt;(value: Element): <a href="aggregator_v2.md#0x1_aggregator_v2_AggregatorSnapshot">aggregator_v2::AggregatorSnapshot</a>&lt;Element&gt;
@@ -394,6 +423,7 @@ Returns a value stored in this aggregator.
 
 ## Function `copy_snapshot`
 
+NOT YET IMPLEMENTED, always raises EAGGREGATOR_FUNCTION_NOT_YET_SUPPORTED.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="aggregator_v2.md#0x1_aggregator_v2_copy_snapshot">copy_snapshot</a>&lt;Element: <b>copy</b>, drop&gt;(snapshot: &<a href="aggregator_v2.md#0x1_aggregator_v2_AggregatorSnapshot">aggregator_v2::AggregatorSnapshot</a>&lt;Element&gt;): <a href="aggregator_v2.md#0x1_aggregator_v2_AggregatorSnapshot">aggregator_v2::AggregatorSnapshot</a>&lt;Element&gt;
@@ -416,6 +446,8 @@ Returns a value stored in this aggregator.
 
 ## Function `read_snapshot`
 
+Returns a value stored in this snapshot.
+Note: This operation prevents parallelism of the transaction that calls it.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="aggregator_v2.md#0x1_aggregator_v2_read_snapshot">read_snapshot</a>&lt;Element&gt;(snapshot: &<a href="aggregator_v2.md#0x1_aggregator_v2_AggregatorSnapshot">aggregator_v2::AggregatorSnapshot</a>&lt;Element&gt;): Element

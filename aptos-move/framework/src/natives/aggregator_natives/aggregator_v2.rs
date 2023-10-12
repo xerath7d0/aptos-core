@@ -50,7 +50,7 @@ fn is_string_type(context: &SafeNativeContext, type_arg: &Type) -> SafeNativeRes
     Ok(false)
 }
 
-/// Given the list of native function arguments and a type, returns a tuple of its
+/// Given the native function argument and a type, returns a tuple of its
 /// fields: (`aggregator id`, `limit`).
 pub fn get_aggregator_fields_by_type(
     ty_arg: &Type,
