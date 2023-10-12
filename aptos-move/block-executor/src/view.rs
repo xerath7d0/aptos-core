@@ -102,6 +102,11 @@ fn get_delayed_field_value_impl<T: Transaction>(
     id: &T::Identifier,
     txn_idx: TxnIndex,
 ) -> Result<DelayedFieldValue, PanicOr<DelayedFieldsSpeculativeError>> {
+    // We expect only DelayedFieldReadKind::Value (which is set from this function),
+    // to be a "full materialized/aggregated" read, and so we don't use the value
+    // from HistoryBounded reads.
+    // If we wanted to make it more dynamic, we could have a type of the read value
+    // inside HistoryBounded
     let delayed_read = captured_reads
         .borrow()
         .get_delayed_field_by_kind(id, DelayedFieldReadKind::Value);
@@ -166,7 +171,7 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
     let math = BoundedMath::new(max_value);
     let delayed_read = captured_reads
         .borrow()
-        .get_delayed_field_by_kind(id, DelayedFieldReadKind::Bounded);
+        .get_delayed_field_by_kind(id, DelayedFieldReadKind::HistoryBounded);
     match delayed_read {
         Some(DelayedFieldRead::Value { value, inner_delta }) => {
             if base_delta != &inner_delta {
@@ -193,7 +198,7 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                 Ok(true)
             }
         },
-        Some(DelayedFieldRead::Bounded {
+        Some(DelayedFieldRead::HistoryBounded {
             delta_restriction,
             inner_value,
         }) => {
@@ -241,7 +246,7 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                 captured_reads.borrow_mut().capture_delayed_field_read(
                     *id,
                     true,
-                    DelayedFieldRead::Bounded {
+                    DelayedFieldRead::HistoryBounded {
                         delta_restriction: DeltaOp::new(before_delta, before_max_value, history),
                         inner_value,
                     },
@@ -253,7 +258,7 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                 captured_reads.borrow_mut().capture_delayed_field_read(
                     *id,
                     true,
-                    DelayedFieldRead::Bounded {
+                    DelayedFieldRead::HistoryBounded {
                         delta_restriction: DeltaOp::new(new_delta, before_max_value, history),
                         inner_value,
                     },
@@ -306,7 +311,7 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                 captured_reads.borrow_mut().capture_delayed_field_read(
                     *id,
                     false,
-                    DelayedFieldRead::Bounded {
+                    DelayedFieldRead::HistoryBounded {
                         delta_restriction: DeltaOp::new(
                             SignedU128::Positive(0),
                             max_value,
@@ -321,7 +326,7 @@ fn delayed_field_try_add_delta_outcome_impl<T: Transaction>(
                 captured_reads.borrow_mut().capture_delayed_field_read(
                     *id,
                     false,
-                    DelayedFieldRead::Bounded {
+                    DelayedFieldRead::HistoryBounded {
                         delta_restriction: DeltaOp::new(*delta, max_value, history),
                         inner_value: last_committed_value,
                     },
@@ -1082,8 +1087,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
@@ -1098,8 +1103,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 0,
@@ -1114,8 +1119,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
@@ -1130,8 +1135,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
@@ -1146,8 +1151,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 500,
                     min_achieved_negative_delta: 50,
@@ -1162,8 +1167,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 500,
                     min_achieved_negative_delta: 100,
@@ -1214,8 +1219,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 0,
@@ -1230,8 +1235,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
@@ -1246,8 +1251,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
@@ -1262,8 +1267,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
@@ -1278,8 +1283,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
@@ -1294,8 +1299,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 400,
                     min_achieved_negative_delta: 50,
@@ -1346,8 +1351,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
@@ -1362,8 +1367,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
@@ -1378,8 +1383,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
@@ -1394,8 +1399,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
@@ -1410,8 +1415,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
@@ -1426,8 +1431,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,
@@ -1478,8 +1483,8 @@ mod test {
         assert_some_eq!(
             captured_reads
                 .borrow()
-                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::Bounded),
-            DelayedFieldRead::Bounded {
+                .get_delayed_field_by_kind(&id, DelayedFieldReadKind::HistoryBounded),
+            DelayedFieldRead::HistoryBounded {
                 delta_restriction: DeltaOp::new(base_delta, max_value, DeltaHistory {
                     max_achieved_positive_delta: 300,
                     min_achieved_negative_delta: 0,

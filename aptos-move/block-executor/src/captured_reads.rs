@@ -162,7 +162,7 @@ struct GroupRead<T: Transaction> {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DelayedFieldReadKind {
     /// The returned value is guaranteed to be correct.
-    Bounded,
+    HistoryBounded,
     /// The returned value is based on last committed value, ignoring
     /// any pending changes.
     Value,
@@ -176,6 +176,7 @@ pub enum DelayedFieldRead {
     // checked for read validation.
     Value {
         value: DelayedFieldValue,
+        // stored only for asserts, unnecessary.
         inner_delta: SignedU128,
     },
     // Represents a restricted read - where a range of values that satisfy DeltaOp History
@@ -184,7 +185,8 @@ pub enum DelayedFieldRead {
     // and so we need to respect that those return the same outcome when doing the validation.
     // Running inner_value is kept only for internal bookeeping - and is used to as a value against
     // which results are computed, but is not checked for read validation.
-    Bounded {
+    HistoryBounded {
+        // delta/max_value here is only for asserts, otherwise unnecessary
         delta_restriction: DeltaOp,
         inner_value: DelayedFieldValue,
     },
@@ -195,7 +197,7 @@ impl DelayedFieldRead {
         use DelayedFieldRead::*;
         match self {
             Value { .. } => DelayedFieldReadKind::Value,
-            Bounded { .. } => DelayedFieldReadKind::Bounded,
+            HistoryBounded { .. } => DelayedFieldReadKind::HistoryBounded,
         }
     }
 
@@ -226,11 +228,11 @@ impl DelayedFieldRead {
                 }
             },
             (
-                Bounded {
+                HistoryBounded {
                     delta_restriction: d1,
                     inner_value: v1,
                 },
-                Bounded {
+                HistoryBounded {
                     delta_restriction: d2,
                     inner_value: v2,
                 },
@@ -242,10 +244,10 @@ impl DelayedFieldRead {
                     DataReadComparison::Inconsistent
                 }
             },
-            (Bounded { .. }, Value { .. }) => DataReadComparison::Insufficient,
+            (HistoryBounded { .. }, Value { .. }) => DataReadComparison::Insufficient,
             (
                 Value { value: v1, .. },
-                Bounded {
+                HistoryBounded {
                     delta_restriction: d2,
                     ..
                 },
@@ -570,6 +572,7 @@ impl<T: Transaction> CapturedReads<T> {
 
         use MVDelayedFieldsError::*;
         for (id, read_value) in &self.delayed_field_reads {
+            // we can call committed_value here as this validation happens at commit time.
             match delayed_fields.read_latest_committed_value(
                 id,
                 idx_to_validate,
@@ -581,7 +584,7 @@ impl<T: Transaction> CapturedReads<T> {
                             return Ok(false);
                         }
                     },
-                    DelayedFieldRead::Bounded {
+                    DelayedFieldRead::HistoryBounded {
                         delta_restriction, ..
                     } => match delta_restriction.apply_to(current_value.into_aggregator_value()?) {
                         Ok(_) => {},
