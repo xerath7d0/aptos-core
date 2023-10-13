@@ -42,3 +42,9 @@ impl ProcessExecutorService {
         self.executor_service.shutdown()
     }
 }
+
+impl Drop for ProcessExecutorService {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}

@@ -105,10 +105,8 @@ pub struct PipelineOpt {
     allow_discards: bool,
     #[clap(long)]
     allow_aborts: bool,
-    #[clap(long, default_value = "1")]
+    #[clap(long, default_value = "0")]
     num_executor_shards: usize,
-    #[clap(long)]
-    remote_sharding: bool,
     #[clap(long, num_args = 1..)]
     remote_executor_addresses: Option<Vec<SocketAddr>>,
     #[clap(long)]
@@ -430,30 +428,32 @@ fn main() {
 
     let execution_threads = opt.execution_threads();
     let execution_shards = opt.pipeline_opt.num_executor_shards;
-    assert!(
-        execution_threads % execution_shards == 0,
-        "Execution threads ({}) must be divisible by the number of execution shards ({}).",
-        execution_threads,
-        execution_shards
-    );
-    let execution_threads_per_shard = execution_threads / execution_shards;
+    let mut execution_threads_per_shard = execution_threads;
+    if execution_shards > 1 {
+        assert!(
+            execution_threads % execution_shards == 0,
+            "Execution threads ({}) must be divisible by the number of execution shards ({}).",
+            execution_threads,
+            execution_shards
+        );
+        execution_threads_per_shard = execution_threads / execution_shards;
+    }
 
-    chunk_output::set_remote_sharding(opt.pipeline_opt.remote_sharding);
     if opt.pipeline_opt.remote_executor_addresses.is_some() {
         chunk_output::set_remote_addresses(
             opt.pipeline_opt.remote_executor_addresses.clone().unwrap(),
+        );
+        assert_eq!(
+            execution_shards,
+            chunk_output::get_remote_addresses().len(),
+            "Number of execution shards ({}) must be equal to the number of remote addresses ({}).",
+            execution_shards,
+            chunk_output::get_remote_addresses().len()
         );
     }
     if opt.pipeline_opt.coordinator_address.is_some() {
         chunk_output::set_coordinator_address(opt.pipeline_opt.coordinator_address.unwrap());
     }
-    assert_eq!(
-        execution_shards,
-        chunk_output::get_remote_addresses().len(),
-        "Number of execution shards ({}) must be equal to the number of remote addresses ({}).",
-        execution_shards,
-        chunk_output::get_remote_addresses().len()
-    );
 
     AptosVM::set_num_shards_once(execution_shards);
     AptosVM::set_concurrency_level_once(execution_threads_per_shard);
