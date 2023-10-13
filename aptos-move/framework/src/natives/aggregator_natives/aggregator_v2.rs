@@ -46,9 +46,14 @@ pub const EAGGREGATOR_API_NOT_ENABLED: u64 = 0x03_0006;
 /// The generic type supplied to the aggregators is not supported.
 pub const EUNSUPPORTED_AGGREGATOR_TYPE: u64 = 0x03_0007;
 
+/// Arguments passed to concat exceed max limit of 256 bytes (for prefix and suffix together)
+pub const ECONCAT_STRING_LENGTH_TOO_LARGE: u64 = 0x03_0008;
+
 /// The native aggregator function, that is in the move file, is not yet supported.
 /// and any calls will raise this error.
 pub const EAGGREGATOR_FUNCTION_NOT_YET_SUPPORTED: u64 = 0x03_0009;
+
+pub const CONCAT_PREFIX_AND_SUFFIX_MAX_LENGTH: usize = 256;
 
 /// Checks if the type argument `type_arg` is a string type.
 fn is_string_type(context: &SafeNativeContext, type_arg: &Type) -> SafeNativeResult<bool> {
@@ -494,6 +499,12 @@ fn native_string_concat(
     };
 
     let prefix = string_to_bytes(safely_pop_arg!(args, Struct))?;
+
+    if prefix.len() + suffix.len() > CONCAT_PREFIX_AND_SUFFIX_MAX_LENGTH {
+        return Err(SafeNativeError::Abort {
+            abort_code: ECONCAT_STRING_LENGTH_TOO_LARGE,
+        });
+    }
 
     let result_value = if context.aggregator_execution_enabled() {
         let (resolver, mut delayed_field_data) = get_context_data(context);
