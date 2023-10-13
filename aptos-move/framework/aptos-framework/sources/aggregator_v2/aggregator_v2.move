@@ -28,6 +28,9 @@ module aptos_framework::aggregator_v2 {
     /// The generic type supplied to the aggregator is not supported.
     const EUNSUPPORTED_AGGREGATOR_TYPE: u64 = 7;
 
+    /// Arguments passed to concat exceed max limit of 256 bytes (for prefix and suffix together)
+    const ECONCAT_STRING_LENGTH_TOO_LARGE: u64 = 8;
+
     /// The native aggregator function, that is in the move file, is not yet supported.
     /// and any calls will raise this error.
     const EAGGREGATOR_FUNCTION_NOT_YET_SUPPORTED: u64 = 9;
@@ -107,7 +110,8 @@ module aptos_framework::aggregator_v2 {
 
     /// Concatenates `before`, `snapshot` and `after` into a single string.
     /// snapshot passed needs to have integer type - currently supported types are u64 and u128.
-    /// raises EUNSUPPORTED_AGGREGATOR_SNAPSHOT_TYPE if called with another type.
+    /// Raises EUNSUPPORTED_AGGREGATOR_SNAPSHOT_TYPE if called with another type.
+    /// If length of prefix and suffix together exceed 256 bytes, ECONCAT_STRING_LENGTH_TOO_LARGE is raised.
     public native fun string_concat<IntElement>(before: String, snapshot: &AggregatorSnapshot<IntElement>, after: String): AggregatorSnapshot<String>;
 
     // #[test(fx = @std)]
