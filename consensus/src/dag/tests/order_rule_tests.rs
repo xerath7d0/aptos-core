@@ -228,7 +228,7 @@ fn test_order_rule_basic() {
         epoch_state.clone(),
         Arc::new(MockStorage::new()),
         0,
-        1,
+        TEST_DAG_WINDOW,
     );
     for round_nodes in &nodes {
         for node in round_nodes.iter().flatten() {
@@ -247,7 +247,7 @@ fn test_order_rule_basic() {
         // anchor (2, 1) has 3 votes
         vec![(1, 2), (1, 1), (2, 1)],
         // anchor (3, 1) has 2 votes
-        vec![(2, 2), (2, 0), (3, 1)],
+        vec![(1, 3), (2, 2), (2, 0), (3, 1)],
         // anchor (4, 2) has 3 votes
         vec![(3, 3), (3, 2), (3, 0), (4, 2)],
         // anchor (5, 2) has 3 votes
