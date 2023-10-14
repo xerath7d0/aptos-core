@@ -40,6 +40,7 @@ pub fn code_invariant_error<M: std::fmt::Debug>(message: M) -> PanicError {
         message
     );
     error!("{}", msg);
+    panic!("{}", msg);
     PanicError::CodeInvariantError(msg)
 }
 

@@ -156,6 +156,10 @@ pub enum EntryPoints {
     },
     /// Increment destination resource - COUNTER_STEP
     StepDst,
+    /// Increment destination AggregatorV2 resource - COUNTER_STEP
+    StepDstAggV2,
+    /// Modify (try_add(1) or try_sub(1)) AggregatorV2 flag (counter with max_value=1)
+    ModifyFlagAggV2,
 
     /// Initialize Token V1 NFT collection
     TokenV1InitializeCollection,
@@ -192,7 +196,9 @@ impl EntryPoints {
             | EntryPoints::EmitEvents { .. }
             | EntryPoints::MakeOrChangeTable { .. }
             | EntryPoints::MakeOrChangeTableRandom { .. }
-            | EntryPoints::StepDst => "simple",
+            | EntryPoints::StepDst
+            | EntryPoints::StepDstAggV2
+            | EntryPoints::ModifyFlagAggV2 => "simple",
             EntryPoints::TokenV1InitializeCollection
             | EntryPoints::TokenV1MintAndStoreNFTParallel
             | EntryPoints::TokenV1MintAndStoreNFTSequential
@@ -225,7 +231,9 @@ impl EntryPoints {
             | EntryPoints::EmitEvents { .. }
             | EntryPoints::MakeOrChangeTable { .. }
             | EntryPoints::MakeOrChangeTableRandom { .. }
-            | EntryPoints::StepDst => "simple",
+            | EntryPoints::StepDst
+            | EntryPoints::StepDstAggV2
+            | EntryPoints::ModifyFlagAggV2 => "simple",
             EntryPoints::TokenV1InitializeCollection
             | EntryPoints::TokenV1MintAndStoreNFTParallel
             | EntryPoints::TokenV1MintAndStoreNFTSequential
@@ -326,6 +334,8 @@ impl EntryPoints {
                 )
             },
             EntryPoints::StepDst => step_dst(module_id, other.expect("Must provide other")),
+            EntryPoints::StepDstAggV2 => step_dst_agg_v2(module_id, other.expect("Must provide other")),
+            EntryPoints::ModifyFlagAggV2 => modify_flag_agg_v2(module_id, other.expect("Must provide other"), rng.expect("Must provide RNG")),
             EntryPoints::TokenV1InitializeCollection => get_payload_void(
                 module_id,
                 ident_str!("token_v1_initialize_collection").to_owned(),
@@ -512,6 +522,19 @@ fn minimize(module_id: ModuleId, other: &AccountAddress) -> TransactionPayload {
 fn step_dst(module_id: ModuleId, dst: &AccountAddress) -> TransactionPayload {
     get_payload(module_id, ident_str!("step_destination").to_owned(), vec![
         bcs::to_bytes(dst).unwrap(),
+    ])
+}
+
+fn step_dst_agg_v2(module_id: ModuleId, dst: &AccountAddress) -> TransactionPayload {
+    get_payload(module_id, ident_str!("step_destination_agg_v2").to_owned(), vec![
+        bcs::to_bytes(dst).unwrap(),
+    ])
+}
+
+fn modify_flag_agg_v2(module_id: ModuleId, dst: &AccountAddress, rng: &mut StdRng) -> TransactionPayload {
+    get_payload(module_id, ident_str!("modify_destination_flag_agg_v2").to_owned(), vec![
+        bcs::to_bytes(dst).unwrap(),
+        bcs::to_bytes(&rng.gen::<bool>()).unwrap(),
     ])
 }
 

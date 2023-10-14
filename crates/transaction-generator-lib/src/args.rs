@@ -22,6 +22,8 @@ pub enum TransactionTypeArg {
     AccountResource1KB,
     AccountResource10KB,
     ModifyGlobalResource,
+    ModifyGlobalResourceAggV2,
+    ModifyGlobalFlagAggV2,
     Batch100Transfer,
     TokenV1NFTMintAndStoreSequential,
     TokenV1NFTMintAndTransferSequential,
@@ -93,6 +95,16 @@ impl TransactionTypeArg {
             },
             TransactionTypeArg::ModifyGlobalResource => TransactionType::CallCustomModules {
                 entry_point: EntryPoints::StepDst,
+                num_modules: module_working_set_size,
+                use_account_pool: sender_use_account_pool,
+            },
+            TransactionTypeArg::ModifyGlobalResourceAggV2 => TransactionType::CallCustomModules {
+                entry_point: EntryPoints::StepDstAggV2,
+                num_modules: module_working_set_size,
+                use_account_pool: sender_use_account_pool,
+            },
+            TransactionTypeArg::ModifyGlobalFlagAggV2 => TransactionType::CallCustomModules {
+                entry_point: EntryPoints::ModifyFlagAggV2,
                 num_modules: module_working_set_size,
                 use_account_pool: sender_use_account_pool,
             },
