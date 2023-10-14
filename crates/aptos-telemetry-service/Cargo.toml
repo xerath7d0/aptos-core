@@ -52,3 +52,4 @@ warp = { workspace = true }
 
 [dev-dependencies]
 httpmock = { workspace = true }
+claims = { workspace = true }
