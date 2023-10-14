@@ -97,13 +97,15 @@ impl<T: Hash + Clone + Debug + Eq + Serialize, V: TransactionWrite> VersionedGro
             })
             .collect();
 
-        let zero = ShiftedTxnIndex::zero();
-        let base_idx = shifted_idx == zero;
+        let zero_idx = ShiftedTxnIndex::zero();
+        let at_base_version = shifted_idx == zero_idx;
 
         self.idx_to_update
             .insert(shifted_idx, CachePadded::new(arc_map));
-        if base_idx {
-            self.commit_idx(zero)
+
+        if at_base_version {
+            // base version is from storage and final - immediately treat as committed.
+            self.commit_idx(zero_idx)
                 .expect("Marking storage version as committed must succeed");
         }
     }
@@ -361,7 +363,7 @@ mod test {
         test::{KeyType, TestValue},
         StorageVersion,
     };
-    use claims::{assert_matches, assert_none, assert_ok_eq, assert_some_eq};
+    use claims::{assert_err, assert_matches, assert_none, assert_ok_eq, assert_some_eq};
     use test_case::test_case;
 
     #[should_panic]
@@ -380,7 +382,7 @@ mod test {
                 map.delete(&ap, 2);
             },
             2 => {
-                map.commit_group(&ap, 0);
+                let _ = map.commit_group(&ap, 0);
             },
             _ => unreachable!("Wrong test index"),
         }
@@ -579,6 +581,14 @@ mod test {
         assert_ok_eq!(map.get_group_size(&ap, 6), exp_size_4 as u64);
     }
 
+    fn commit_group_as_hashmap(
+        map: &VersionedGroupData<KeyType<Vec<u8>>, usize, TestValue>,
+        key: &KeyType<Vec<u8>>,
+        idx: TxnIndex,
+    ) -> HashMap<usize, Arc<TestValue>> {
+        map.commit_group(key, idx).unwrap().into_iter().collect()
+    }
+
     #[test]
     fn group_commit_idx() {
         let ap = KeyType(b"/foo/f".to_vec());
@@ -587,7 +597,7 @@ mod test {
         map.provide_base_values(
             ap.clone(),
             // base tag 1, 2, 3
-            (1..4).map(|i| (i, TestValue::from_u128(i as u128))),
+            (1..4).map(|i| (i, TestValue::with_kind(i, true))),
         );
         map.write(
             ap.clone(),
@@ -595,7 +605,7 @@ mod test {
             3,
             // insert at 0, remove at 1.
             vec![
-                (0, TestValue::from_u128(100_u128)),
+                (0, TestValue::with_kind(100, true)),
                 (1, TestValue::deletion()),
             ],
         );
@@ -604,60 +614,66 @@ mod test {
             3,
             0,
             // tags 2, 3
-            (2..4).map(|i| (i, TestValue::from_u128(200 + i as u128))),
+            (2..4).map(|i| (i, TestValue::with_kind(200 + i, false))),
         );
-        let committed_3 = map.commit_group(&ap, 3);
+        let committed_3 = commit_group_as_hashmap(&map, &ap, 3);
         // The value at tag 1 is from base, while 2 and 3 are from txn 3.
         // (Arc compares with value equality)
         assert_eq!(committed_3.len(), 3);
-        assert_some_eq!(committed_3.get(&1), &Arc::new(TestValue::from_u128(1)));
+        assert_some_eq!(
+            committed_3.get(&1),
+            &Arc::new(TestValue::with_kind(1, true))
+        );
         assert_some_eq!(
             committed_3.get(&2),
-            &Arc::new(TestValue::from_u128(200 + 2))
+            &Arc::new(TestValue::with_kind(202, false))
         );
         assert_some_eq!(
             committed_3.get(&3),
-            &Arc::new(TestValue::from_u128(200 + 3))
+            &Arc::new(TestValue::with_kind(203, false))
         );
 
-        map.write(
-            ap.clone(),
-            5,
-            3,
-            // tags 3, 4
-            (3..5).map(|i| (i, TestValue::from_u128(300 + i as u128))),
-        );
-        let committed_5 = map.commit_group(&ap, 5);
+        map.write(ap.clone(), 5, 3, vec![
+            (3, TestValue::with_kind(303, false)),
+            (4, TestValue::with_kind(304, true)),
+        ]);
+        let committed_5 = commit_group_as_hashmap(&map, &ap, 5);
         assert_eq!(committed_5.len(), 4);
-        assert_some_eq!(committed_5.get(&1), &Arc::new(TestValue::from_u128(1)));
+        assert_some_eq!(
+            committed_5.get(&1),
+            &Arc::new(TestValue::with_kind(1, true))
+        );
         assert_some_eq!(
             committed_5.get(&2),
-            &Arc::new(TestValue::from_u128(200 + 2))
+            &Arc::new(TestValue::with_kind(202, false))
         );
         assert_some_eq!(
             committed_5.get(&3),
-            &Arc::new(TestValue::from_u128(300 + 3))
+            &Arc::new(TestValue::with_kind(303, false))
         );
         assert_some_eq!(
             committed_5.get(&4),
-            &Arc::new(TestValue::from_u128(300 + 4))
+            &Arc::new(TestValue::with_kind(304, true))
         );
 
-        let committed_7 = map.commit_group(&ap, 7);
+        let committed_7 = commit_group_as_hashmap(&map, &ap, 7);
         assert_eq!(committed_7.len(), 4);
-        assert_some_eq!(committed_7.get(&0), &Arc::new(TestValue::from_u128(100)));
+        assert_some_eq!(
+            committed_7.get(&0),
+            &Arc::new(TestValue::with_kind(100, true))
+        );
         assert_none!(committed_7.get(&1));
         assert_some_eq!(
             committed_7.get(&2),
-            &Arc::new(TestValue::from_u128(200 + 2))
+            &Arc::new(TestValue::with_kind(202, false))
         );
         assert_some_eq!(
             committed_7.get(&3),
-            &Arc::new(TestValue::from_u128(300 + 3))
+            &Arc::new(TestValue::with_kind(303, false))
         );
         assert_some_eq!(
             committed_7.get(&4),
-            &Arc::new(TestValue::from_u128(300 + 4))
+            &Arc::new(TestValue::with_kind(304, true))
         );
 
         map.write(
@@ -667,14 +683,78 @@ mod test {
             // re-insert at 1, delete everything else
             vec![
                 (0, TestValue::deletion()),
-                (1, TestValue::from_u128(400_u128)),
+                (1, TestValue::with_kind(400, true)),
                 (2, TestValue::deletion()),
                 (3, TestValue::deletion()),
                 (4, TestValue::deletion()),
             ],
         );
-        let committed_8 = map.commit_group(&ap, 8);
+        let committed_8 = commit_group_as_hashmap(&map, &ap, 8);
         assert_eq!(committed_8.len(), 1);
-        assert_some_eq!(committed_8.get(&1), &Arc::new(TestValue::from_u128(400)));
+        assert_some_eq!(
+            committed_8.get(&1),
+            &Arc::new(TestValue::with_kind(400, true))
+        );
+    }
+
+    #[test]
+    fn group_commit_op_kind_checks() {
+        let ap = KeyType(b"/foo/f".to_vec());
+        let map = VersionedGroupData::<KeyType<Vec<u8>>, usize, TestValue>::new();
+
+        map.provide_base_values(
+            ap.clone(),
+            // base tag 1, 2, 3
+            (1..4).map(|i| (i, TestValue::with_kind(i, true))),
+        );
+        map.write(
+            ap.clone(),
+            3,
+            2,
+            // remove at 0, must fail commit.
+            vec![(0, TestValue::deletion())],
+        );
+        assert_err!(map.commit_group(&ap, 3));
+
+        map.write(
+            ap.clone(),
+            3,
+            2,
+            // modify at 0, must fail commit.
+            vec![(0, TestValue::with_kind(100, false))],
+        );
+        assert_err!(map.commit_group(&ap, 3));
+
+        map.write(
+            ap.clone(),
+            3,
+            2,
+            // create at 1, must fail commit
+            vec![(1, TestValue::with_kind(101, true))],
+        );
+        assert_err!(map.commit_group(&ap, 3));
+
+        // sanity check the commit succeeds with proper kind.
+        map.write(
+            ap.clone(),
+            3,
+            2,
+            // modify at 0, must fail commit.
+            vec![
+                (0, TestValue::with_kind(100, true)),
+                (1, TestValue::with_kind(101, false)),
+            ],
+        );
+        let committed = commit_group_as_hashmap(&map, &ap, 3);
+        assert_some_eq!(
+            committed.get(&0),
+            &Arc::new(TestValue::with_kind(100, true))
+        );
+        assert_some_eq!(
+            committed.get(&1),
+            &Arc::new(TestValue::with_kind(101, false))
+        );
+        assert_some_eq!(committed.get(&2), &Arc::new(TestValue::with_kind(2, true)));
+        assert_some_eq!(committed.get(&3), &Arc::new(TestValue::with_kind(3, true)));
     }
 }

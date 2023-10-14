@@ -58,7 +58,7 @@ pub enum MVModulesError {
     Dependency(TxnIndex),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum GroupReadResult {
     Value(Option<Bytes>),
     Size(u64),
@@ -137,8 +137,10 @@ pub(crate) mod test {
     use super::*;
     use aptos_aggregator::delta_change_set::serialize;
     use aptos_types::{
-        access_path::AccessPath, executable::ModulePath, state_store::state_value::StateValue,
-        write_set::TransactionWrite,
+        access_path::AccessPath,
+        executable::ModulePath,
+        state_store::state_value::StateValue,
+        write_set::{TransactionWrite, WriteOpKind},
     };
     use bytes::Bytes;
     use claims::{assert_err, assert_ok_eq};
@@ -176,27 +178,45 @@ pub(crate) mod test {
     }
 
     #[derive(Debug, PartialEq, Eq)]
+    // Kind is set to Creation by default as that makes sense for providing
+    // group base values (used in some tests), and most tests do not care about
+    // the kind. Otherwise, there are specific constructors that initialize kind
+    // for the tests that care (testing group commit logic in parallel).
     pub(crate) struct TestValue {
         bytes: Bytes,
+        kind: WriteOpKind,
     }
 
     impl TestValue {
         pub(crate) fn deletion() -> Self {
             Self {
-                bytes: vec![].into(),
+                bytes: Bytes::new(),
+                kind: WriteOpKind::Deletion,
             }
         }
 
-        pub fn new(mut seed: Vec<u32>) -> Self {
+        pub(crate) fn with_kind(value: usize, is_creation: bool) -> Self {
+            let mut s = Self::from_u128(value as u128);
+            s.kind = if is_creation {
+                WriteOpKind::Creation
+            } else {
+                WriteOpKind::Modification
+            };
+            s
+        }
+
+        pub(crate) fn new(mut seed: Vec<u32>) -> Self {
             seed.resize(4, 0);
             Self {
                 bytes: seed.into_iter().flat_map(|v| v.to_be_bytes()).collect(),
+                kind: WriteOpKind::Creation,
             }
         }
 
         pub(crate) fn from_u128(value: u128) -> Self {
             Self {
                 bytes: serialize(&value).into(),
+                kind: WriteOpKind::Creation,
             }
         }
 
@@ -204,6 +224,7 @@ pub(crate) mod test {
             assert!(len > 0, "0 is deletion");
             Self {
                 bytes: vec![100_u8; len].into(),
+                kind: WriteOpKind::Creation,
             }
         }
     }
@@ -211,6 +232,10 @@ pub(crate) mod test {
     impl TransactionWrite for TestValue {
         fn bytes(&self) -> Option<&Bytes> {
             (!self.bytes.is_empty()).then_some(&self.bytes)
+        }
+
+        fn write_op_kind(&self) -> WriteOpKind {
+            self.kind.clone()
         }
 
         fn from_state_value(_maybe_state_value: Option<StateValue>) -> Self {

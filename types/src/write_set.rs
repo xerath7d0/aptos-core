@@ -33,7 +33,7 @@ pub static TOTAL_SUPPLY_STATE_KEY: Lazy<StateKey> = Lazy::new(|| {
     )
 });
 
-#[derive(Eq, Debug, PartialEq)]
+#[derive(Eq, Clone, Debug, PartialEq)]
 pub enum WriteOpKind {
     Creation,
     Modification,
