@@ -63,6 +63,11 @@ class Test(unittest.IsolatedAsyncioTestCase):
 
         await rotate_key.main()
 
+    async def test_secp256k1_ecdsa_transfer_coin(self):
+        from . import secp256k1_ecdsa_transfer_coin
+
+        await secp256k1_ecdsa_transfer_coin.main()
+
     async def test_simple_nft(self):
         from . import simple_nft
 

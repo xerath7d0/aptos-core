@@ -67,7 +67,7 @@ class PrivateKey(asymmetric_crypto.PrivateKey):
         if len(key) != PrivateKey.LENGTH:
             raise Exception("Length mismatch")
 
-        return PrivateKey(SigningKey.from_string(key, SECP256k1))
+        return PrivateKey(SigningKey.from_string(key, SECP256k1, hashlib.sha3_256))
 
     def serialize(self, serializer: Serializer):
         serializer.to_bytes(self.key.to_string())
@@ -104,7 +104,6 @@ class PublicKey(asymmetric_crypto.PublicKey):
         )
 
     def hex(self) -> str:
-        print("HERE???")
         return f"0x04{self.key.to_string().hex()}"
 
     def verify(self, data: bytes, signature: asymmetric_crypto.Signature) -> bool:
@@ -128,7 +127,7 @@ class PublicKey(asymmetric_crypto.PublicKey):
             else:
                 raise Exception("Length mismatch")
 
-        return PublicKey(VerifyingKey.from_string(key, SECP256k1))
+        return PublicKey(VerifyingKey.from_string(key, SECP256k1, hashlib.sha3_256))
 
     def serialize(self, serializer: Serializer):
         serializer.to_bytes(self.to_crypto_bytes())
@@ -183,10 +182,8 @@ class Test(unittest.TestCase):
         )
         public_key_hex = "0x04210c9129e35337ff5d6488f90f18d842cf985f06e0baeff8df4bfb2ac4221863e2631b971a237b5db0aa71188e33250732dd461d56ee623cbe0426a5c2db79ef"
         signature_hex = "0xa539b0973e76fa99b2a864eebd5da950b4dfb399c7afe57ddb34130e454fc9db04dceb2c3d4260b8cc3d3952ab21b5d36c7dc76277fe3747764e6762d12bd9a9"
-
         data = b"Hello world"
-        has = hashlib.sha3_256()
-        has.update(data)
+
         private_key = PrivateKey.from_str(private_key_hex)
         local_public_key = private_key.public_key()
         local_signature = private_key.sign(data)

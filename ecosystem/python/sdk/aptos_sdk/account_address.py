@@ -7,13 +7,14 @@ import hashlib
 import unittest
 from dataclasses import dataclass
 
-from . import asymmetric_crypto, ed25519
+from . import asymmetric_crypto, ed25519, secp256k1_ecdsa
 from .bcs import Deserializer, Serializer
 
 
 class AuthKeyScheme:
     Ed25519: bytes = b"\x00"
     MultiEd25519: bytes = b"\x01"
+    Secp256k1Ecdsa: bytes = b"\x02"
     DeriveObjectAddressFromGuid: bytes = b"\xFD"
     DeriveObjectAddressFromSeed: bytes = b"\xFE"
     DeriveResourceAccountAddress: bytes = b"\xFF"
@@ -204,6 +205,8 @@ class AccountAddress:
             hasher.update(AuthKeyScheme.Ed25519)
         elif isinstance(key, ed25519.MultiPublicKey):
             hasher.update(AuthKeyScheme.MultiEd25519)
+        elif isinstance(key, secp256k1_ecdsa.PublicKey):
+            hasher.update(AuthKeyScheme.Secp256k1Ecdsa)
         else:
             raise Exception("Unsupported asymmetric_crypto.PublicKey key type.")
 
@@ -644,3 +647,20 @@ class Test(unittest.TestCase):
         self.assertRaises(
             RuntimeError, AccountAddress.from_str, ADDRESS_OTHER.longWithout0x
         )
+
+    def test_secp256k1_ecdsa(self):
+        pub_key_0_hex = "0x049b8327d929a0e45285c04d19c9fffbee065c266b701972922d807228120e43f34ad68ac77f6ec0205fe39f7c5b6055dad973a03464a3a743302de0feaf6ec6d9"
+        pub_key_1_hex = "0x9b8327d929a0e45285c04d19c9fffbee065c266b701972922d807228120e43f34ad68ac77f6ec0205fe39f7c5b6055dad973a03464a3a743302de0feaf6ec6d9"
+        account_addr_hex = (
+            "0xedc9844da6637804e5f430e1279aed7f5e1353b8f000c8492fc7ee53d0508d55"
+        )
+
+        pub_key_0 = secp256k1_ecdsa.PublicKey.from_str(pub_key_0_hex)
+        pub_key_1 = secp256k1_ecdsa.PublicKey.from_str(pub_key_1_hex)
+        account_addr = AccountAddress.from_str(account_addr_hex)
+
+        from_key_0 = AccountAddress.from_key(pub_key_0)
+        from_key_1 = AccountAddress.from_key(pub_key_1)
+
+        self.assertEqual(account_addr, from_key_0)
+        self.assertEqual(account_addr, from_key_1)

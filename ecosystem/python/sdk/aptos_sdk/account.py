@@ -6,8 +6,9 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from typing import cast
 
-from . import asymmetric_crypto, ed25519
+from . import asymmetric_crypto, authenticator, ed25519, secp256k1_ecdsa
 from .account_address import AccountAddress
 from .bcs import Serializer
 
@@ -16,10 +17,10 @@ class Account:
     """Represents an account as well as the private, public key-pair for the Aptos blockchain."""
 
     account_address: AccountAddress
-    private_key: ed25519.PrivateKey
+    private_key: asymmetric_crypto.PrivateKey
 
     def __init__(
-        self, account_address: AccountAddress, private_key: ed25519.PrivateKey
+        self, account_address: AccountAddress, private_key: asymmetric_crypto.PrivateKey
     ):
         self.account_address = account_address
         self.private_key = private_key
@@ -35,6 +36,12 @@ class Account:
     @staticmethod
     def generate() -> Account:
         private_key = ed25519.PrivateKey.random()
+        account_address = AccountAddress.from_key(private_key.public_key())
+        return Account(account_address, private_key)
+
+    @staticmethod
+    def generate_secp256k1_ecdsa() -> Account:
+        private_key = secp256k1_ecdsa.PrivateKey.random()
         account_address = AccountAddress.from_key(private_key.public_key())
         return Account(account_address, private_key)
 
@@ -70,10 +77,46 @@ class Account:
         """Returns the auth_key for the associated account"""
         return str(AccountAddress.from_key(self.private_key.public_key()))
 
-    def sign(self, data: bytes) -> ed25519.Signature:
+    def sign(self, data: bytes) -> asymmetric_crypto.Signature:
         return self.private_key.sign(data)
 
-    def public_key(self) -> ed25519.PublicKey:
+    def sign_into_simulated_authenticator(self) -> authenticator.Authenticator:
+        if isinstance(self.private_key, ed25519.PrivateKey):
+            return authenticator.Authenticator(
+                authenticator.Ed25519Authenticator(
+                    cast(ed25519.PublicKey, self.public_key()),
+                    ed25519.Signature(b"\x00" * 64),
+                )
+            )
+        elif isinstance(self.private_key, secp256k1_ecdsa.PrivateKey):
+            return authenticator.Authenticator(
+                authenticator.Secp256k1EcdsaAuthenticator(
+                    cast(secp256k1_ecdsa.PublicKey, self.public_key()),
+                    secp256k1_ecdsa.Signature(b"\x00" * 64),
+                )
+            )
+        else:
+            raise Exception("Unsupported private key")
+
+    def sign_into_authenticator(self, raw_txn: bytes) -> authenticator.Authenticator:
+        if isinstance(self.private_key, ed25519.PrivateKey):
+            return authenticator.Authenticator(
+                authenticator.Ed25519Authenticator(
+                    cast(ed25519.PublicKey, self.public_key()),
+                    cast(ed25519.Signature, self.sign(raw_txn)),
+                )
+            )
+        elif isinstance(self.private_key, secp256k1_ecdsa.PrivateKey):
+            return authenticator.Authenticator(
+                authenticator.Secp256k1EcdsaAuthenticator(
+                    cast(secp256k1_ecdsa.PublicKey, self.public_key()),
+                    cast(secp256k1_ecdsa.Signature, self.sign(raw_txn)),
+                )
+            )
+        else:
+            raise Exception("Unsupported private key")
+
+    def public_key(self) -> asymmetric_crypto.PublicKey:
         """Returns the public key for the associated account"""
 
         return self.private_key.public_key()

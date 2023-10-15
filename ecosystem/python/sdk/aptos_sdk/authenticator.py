@@ -6,7 +6,7 @@ from __future__ import annotations
 import typing
 from typing import List
 
-from . import asymmetric_crypto, ed25519
+from . import asymmetric_crypto, ed25519, secp256k1_ecdsa
 from .account_address import AccountAddress
 from .bcs import Deserializer, Serializer
 
@@ -22,6 +22,7 @@ class Authenticator:
     ED25519: int = 0
     MULTI_ED25519: int = 1
     MULTI_AGENT: int = 2
+    SECP256K1_ECDSA: int = 4
 
     variant: int
     authenticator: typing.Any
@@ -33,6 +34,8 @@ class Authenticator:
             self.variant = Authenticator.MULTI_ED25519
         elif isinstance(authenticator, MultiAgentAuthenticator):
             self.variant = Authenticator.MULTI_AGENT
+        elif isinstance(authenticator, Secp256k1EcdsaAuthenticator):
+            self.variant = Authenticator.SECP256K1_ECDSA
         else:
             raise Exception("Invalid type")
         self.authenticator = authenticator
@@ -42,6 +45,8 @@ class Authenticator:
             return Authenticator.ED25519
         elif isinstance(key, ed25519.MultiPublicKey):
             return Authenticator.MULTI_ED25519
+        elif isinstance(key, secp256k1_ecdsa.PublicKey):
+            return Authenticator.SECP256K1_ECDSA
         else:
             raise NotImplementedError()
 
@@ -68,6 +73,8 @@ class Authenticator:
             authenticator = MultiEd25519Authenticator.deserialize(deserializer)
         elif variant == Authenticator.MULTI_AGENT:
             authenticator = MultiAgentAuthenticator.deserialize(deserializer)
+        elif variant == Authenticator.SECP256K1_ECDSA:
+            authenticator = Secp256k1EcdsaAuthenticator.deserialize(deserializer)
         else:
             raise Exception(f"Invalid type: {variant}")
 
@@ -93,7 +100,7 @@ class Ed25519Authenticator:
         return self.public_key == other.public_key and self.signature == other.signature
 
     def __str__(self) -> str:
-        return f"PublicKey: {self.public_key}, Signature: {self.signature}"
+        return f"Ed25519: PublicKey: {self.public_key}, Signature: {self.signature}"
 
     def verify(self, data: bytes) -> bool:
         return self.public_key.verify(data, self.signature)
@@ -166,6 +173,43 @@ class MultiEd25519Authenticator:
     @staticmethod
     def deserialize(deserializer: Deserializer) -> MultiEd25519Authenticator:
         raise NotImplementedError
+
+    def serialize(self, serializer: Serializer):
+        serializer.struct(self.public_key)
+        serializer.struct(self.signature)
+
+
+class Secp256k1EcdsaAuthenticator:
+    public_key: secp256k1_ecdsa.PublicKey
+    signature: secp256k1_ecdsa.Signature
+
+    def __init__(
+        self,
+        public_key: secp256k1_ecdsa.PublicKey,
+        signature: secp256k1_ecdsa.Signature,
+    ):
+        self.public_key = public_key
+        self.signature = signature
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Secp256k1EcdsaAuthenticator):
+            return NotImplemented
+
+        return self.public_key == other.public_key and self.signature == other.signature
+
+    def __str__(self) -> str:
+        return (
+            f"Secp256k1Ecdsa: PublicKey: {self.public_key}, Signature: {self.signature}"
+        )
+
+    def verify(self, data: bytes) -> bool:
+        return self.public_key.verify(data, self.signature)
+
+    @staticmethod
+    def deserialize(deserializer: Deserializer) -> Secp256k1EcdsaAuthenticator:
+        key = deserializer.struct(secp256k1_ecdsa.PublicKey)
+        signature = deserializer.struct(secp256k1_ecdsa.Signature)
+        return Secp256k1EcdsaAuthenticator(key, signature)
 
     def serialize(self, serializer: Serializer):
         serializer.struct(self.public_key)

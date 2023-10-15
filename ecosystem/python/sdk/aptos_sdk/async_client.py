@@ -8,10 +8,9 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from . import ed25519
 from .account import Account
 from .account_address import AccountAddress
-from .authenticator import Authenticator, Ed25519Authenticator, MultiAgentAuthenticator
+from .authenticator import Authenticator, MultiAgentAuthenticator
 from .bcs import Serializer
 from .metadata import Metadata
 from .transactions import (
@@ -235,12 +234,7 @@ class RestClient:
         estimate_gas_usage: bool = False,
     ) -> Dict[str, Any]:
         # Note that simulated transactions are not signed and have all 0 signatures!
-        authenticator = Authenticator(
-            Ed25519Authenticator(
-                sender.public_key(),
-                ed25519.Signature(b"\x00" * 64),
-            )
-        )
+        authenticator = sender.sign_into_simulated_authenticator()
         signed_transaction = SignedTransaction(transaction, authenticator)
 
         headers = {"Content-Type": "application/x.aptos.signed_transaction+bcs"}
@@ -265,6 +259,7 @@ class RestClient:
     async def submit_bcs_transaction(
         self, signed_transaction: SignedTransaction
     ) -> str:
+        print(signed_transaction)
         headers = {"Content-Type": "application/x.aptos.signed_transaction+bcs"}
         response = await self.client.post(
             f"{self.base_url}/transactions",
@@ -398,15 +393,11 @@ class RestClient:
 
         authenticator = Authenticator(
             MultiAgentAuthenticator(
-                Authenticator(
-                    Ed25519Authenticator(sender.public_key(), sender.sign(keyed_txn))
-                ),
+                sender.sign_into_authenticator(keyed_txn),
                 [
                     (
                         x.address(),
-                        Authenticator(
-                            Ed25519Authenticator(x.public_key(), x.sign(keyed_txn))
-                        ),
+                        x.sign_into_authenticator(keyed_txn),
                     )
                     for x in secondary_accounts
                 ],
@@ -445,10 +436,7 @@ class RestClient:
         raw_transaction = await self.create_bcs_transaction(
             sender, payload, sequence_number
         )
-        signature = sender.sign(raw_transaction.keyed())
-        authenticator = Authenticator(
-            Ed25519Authenticator(sender.public_key(), signature)
-        )
+        authenticator = sender.sign_into_authenticator(raw_transaction.keyed())
         return SignedTransaction(raw_transaction, authenticator)
 
     #
