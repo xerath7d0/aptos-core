@@ -54,6 +54,7 @@ use move_bytecode_source_map::{mapping::SourceMapping, source_map::SourceMap};
 use move_command_line_common::{address::NumericalAddress, files::FileHash};
 use move_core_types::{
     account_address::AccountAddress,
+    effects::Op,
     identifier::{IdentStr, Identifier},
     language_storage,
     value::MoveValue,
@@ -1297,11 +1298,14 @@ impl GlobalEnv {
         let field_name = self.symbol_pool.make("v");
         let mut field_data = BTreeMap::new();
         let field_id = FieldId::new(field_name);
-        field_data.insert(field_id, FieldData {
-            name: field_name,
-            offset: 0,
-            ty,
-        });
+        field_data.insert(
+            field_id,
+            FieldData {
+                name: field_name,
+                offset: 0,
+                ty,
+            },
+        );
         StructData {
             name: self.ghost_memory_name(var_name),
             loc,
@@ -2899,6 +2903,39 @@ pub struct FunctionData {
 
     /// A cache for the transitive closure of the called functions.
     pub(crate) transitive_closure_of_called_funs: RefCell<Option<BTreeSet<QualifiedId<FunId>>>>,
+}
+
+impl FunctionData {
+    pub fn new(
+        name: Symbol,
+        loc: Loc,
+        visibility: Visibility,
+        is_native: bool,
+        kind: FunctionKind,
+        type_params: Vec<TypeParameter>,
+        params: Vec<Parameter>,
+        result_type: Type,
+        spec: Spec,
+    ) -> Self {
+        FunctionData {
+            name,
+            loc,
+            def_idx: None,
+            handle_idx: None,
+            visibility,
+            is_native,
+            kind,
+            attributes: Vec::new(),
+            type_params,
+            params,
+            result_type,
+            spec: RefCell::new(spec),
+            def: None,
+            called_funs: None,
+            calling_funs: RefCell::new(None),
+            transitive_closure_of_called_funs: RefCell::new(None),
+        }
+    }
 }
 
 /// Kind of a function,
