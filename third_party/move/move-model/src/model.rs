@@ -2917,7 +2917,6 @@ impl FunctionData {
         type_params: Vec<TypeParameter>,
         params: Vec<Parameter>,
         result_type: Type,
-        spec: Spec,
     ) -> Self {
         FunctionData {
             name,
@@ -2931,7 +2930,7 @@ impl FunctionData {
             type_params,
             params,
             result_type,
-            spec: RefCell::new(spec),
+            spec: RefCell::new(None),
             def: None,
             called_funs: None,
             calling_funs: RefCell::new(None),
