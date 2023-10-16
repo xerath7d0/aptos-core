@@ -2909,6 +2909,8 @@ impl FunctionData {
     pub fn new(
         name: Symbol,
         loc: Loc,
+        def_idx: Option<FunctionDefinitionIndex>,
+        handle_idx: Option<FunctionHandleIndex>,
         visibility: Visibility,
         is_native: bool,
         kind: FunctionKind,
@@ -2920,8 +2922,8 @@ impl FunctionData {
         FunctionData {
             name,
             loc,
-            def_idx: None,
-            handle_idx: None,
+            def_idx,
+            handle_idx,
             visibility,
             is_native,
             kind,
