@@ -2930,7 +2930,7 @@ impl FunctionData {
             type_params,
             params,
             result_type,
-            spec: RefCell::new(None),
+            spec: RefCell::new(Spec::default()),
             def: None,
             called_funs: None,
             calling_funs: RefCell::new(None),
