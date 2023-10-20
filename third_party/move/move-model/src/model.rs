@@ -2461,6 +2461,32 @@ pub struct StructData {
     pub(crate) spec: Spec,
 }
 
+impl StructData {
+    pub fn new(
+        name: Symbol,
+        loc: Loc,
+        def_idx: Option<StructDefinitionIndex>,
+        attributes: Vec<Attribute>,
+        type_params: Vec<TypeParameter>,
+        abilities: AbilitySet,
+        spec_var_opt: Option<SpecVarId>,
+        field_data: BTreeMap<FieldId, FieldData>,
+        spec: Spec,
+    ) -> Self {
+        Self {
+            name,
+            loc,
+            def_idx,
+            attributes,
+            type_params,
+            abilities,
+            spec_var_opt,
+            field_data,
+            spec,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StructEnv<'env> {
     /// Reference to enclosing module.
