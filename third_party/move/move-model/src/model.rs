@@ -2430,7 +2430,7 @@ impl<'env> ModuleEnv<'env> {
 // =================================================================================================
 /// # Struct Environment
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StructData {
     /// The name of this struct.
     pub(crate) name: Symbol,
@@ -2877,7 +2877,7 @@ impl Default for TypeParameterKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parameter(pub Symbol, pub Type);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FunctionData {
     /// Name of this function.
     pub(crate) name: Symbol,
