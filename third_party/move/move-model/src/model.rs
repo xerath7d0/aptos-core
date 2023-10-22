@@ -2093,9 +2093,10 @@ impl<'env> ModuleEnv<'env> {
     ) -> FunctionEnv<'a> {
         let view = FunctionHandleView::new(module, module.function_handle_at(idx));
         let module_name = env.to_module_name(&view.module_id());
-        let module_env = env
-            .find_module(&module_name)
-            .expect("unexpected reference to module not found in global env");
+        let module_env = env.find_module(&module_name).expect(&format!(
+            "unexpected reference to module {} not found in global env",
+            &module_name
+        ));
         module_env.into_function(FunId::new(env.symbol_pool.make(view.name().as_str())))
     }
 
