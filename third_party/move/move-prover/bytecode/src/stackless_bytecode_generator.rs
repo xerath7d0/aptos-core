@@ -53,7 +53,8 @@ pub struct StacklessBytecodeGenerator<'a> {
 impl<'a> StacklessBytecodeGenerator<'a> {
     pub fn new(func_env: &'a FunctionEnv<'a>) -> Self {
         let local_types = (0..func_env.get_local_count().expect(&format!(
-            "{},{}",
+            "function {}, {},{}",
+            func_env.get_name_str(),
             COMPILED_MODULE_AVAILABLE,
             func_env.module_env.get_full_name_str()
         )))
